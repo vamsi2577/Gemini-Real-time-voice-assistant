@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Real-time Voice Assistant",
+  "description": "A multimodal real-time AI assistant that listens to your voice and responds in text. It supports conversation history, custom system prompts, and private data for personalized interactions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
