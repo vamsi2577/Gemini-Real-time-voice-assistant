@@ -1,14 +1,14 @@
 /**
- * @fileoverview A user icon component.
+ * @fileoverview A close (X) icon component.
  */
 import React from 'react';
 
 /**
- * Renders an SVG icon representing a user.
+ * Renders an SVG icon representing a close button (an 'X').
  * @param {object} props - The component props.
  * @param {string} [props.className] - Optional CSS classes to apply to the SVG element.
  */
-const UserIcon: React.FC<{ className?: string }> = ({ className }) => (
+const CloseIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     className={className}
@@ -19,9 +19,9 @@ const UserIcon: React.FC<{ className?: string }> = ({ className }) => (
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-    <circle cx="12" cy="7" r="4"></circle>
+    <line x1="18" y1="6" x2="6" y2="18"></line>
+    <line x1="6" y1="6" x2="18" y2="18"></line>
   </svg>
 );
 
-export default UserIcon;
+export default CloseIcon;

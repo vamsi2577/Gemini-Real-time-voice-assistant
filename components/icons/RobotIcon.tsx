@@ -1,6 +1,13 @@
-
+/**
+ * @fileoverview A robot icon component, used to represent the AI assistant.
+ */
 import React from 'react';
 
+/**
+ * Renders an SVG icon representing a robot.
+ * @param {object} props - The component props.
+ * @param {string} [props.className] - Optional CSS classes to apply to the SVG element.
+ */
 const RobotIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"

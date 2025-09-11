@@ -1,14 +1,14 @@
 /**
- * @fileoverview A user icon component.
+ * @fileoverview A chevron up icon component.
  */
 import React from 'react';
 
 /**
- * Renders an SVG icon representing a user.
+ * Renders an SVG icon representing a chevron pointing up.
  * @param {object} props - The component props.
  * @param {string} [props.className] - Optional CSS classes to apply to the SVG element.
  */
-const UserIcon: React.FC<{ className?: string }> = ({ className }) => (
+const ChevronUpIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     className={className}
@@ -19,9 +19,8 @@ const UserIcon: React.FC<{ className?: string }> = ({ className }) => (
     strokeLinecap="round"
     strokeLinejoin="round"
   >
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-    <circle cx="12" cy="7" r="4"></circle>
+    <polyline points="18 15 12 9 6 15"></polyline>
   </svg>
 );
 
-export default UserIcon;
+export default ChevronUpIcon;

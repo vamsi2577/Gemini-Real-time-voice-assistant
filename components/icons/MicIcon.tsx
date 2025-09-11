@@ -1,6 +1,13 @@
-
+/**
+ * @fileoverview A microphone icon component.
+ */
 import React from 'react';
 
+/**
+ * Renders an SVG icon representing a microphone.
+ * @param {object} props - The component props.
+ * @param {string} [props.className] - Optional CSS classes to apply to the SVG element.
+ */
 const MicIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"

@@ -1,5 +1,13 @@
+/**
+ * @fileoverview An icon for starting a new session, often depicted as a refresh or retry symbol.
+ */
 import React from 'react';
 
+/**
+ * Renders an SVG icon representing 'new session' or 'refresh'.
+ * @param {object} props - The component props.
+ * @param {string} [props.className] - Optional CSS classes to apply to the SVG element.
+ */
 const NewSessionIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
