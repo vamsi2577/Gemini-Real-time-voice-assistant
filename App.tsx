@@ -554,6 +554,16 @@ const App: React.FC = () => {
       recognitionRef.current?.stop();
     } else {
       // --- Start Listening ---
+      
+      // If capturing tab audio, we must ensure the user has selected a virtual audio device.
+      // Otherwise, we would just be listening to their default (physical) microphone, which is confusing.
+      if (isCapturingTabAudio && selectedDeviceId === 'default') {
+        logger.warn("Tab audio transcription attempted with default microphone. Guiding user to settings.");
+        setError("Select a virtual audio device in Settings to transcribe from a tab.");
+        setShowSettings(true); // Open the settings panel to guide the user.
+        return; // Prevent the listener from starting with the wrong source.
+      }
+      
       logger.info("User started listening.");
       userStoppedRef.current = false;
       setError(null);
@@ -638,7 +648,7 @@ const App: React.FC = () => {
       // Start the recognition service.
       recognitionRef.current.start();
     }
-  }, [isListening, initializeChat, sendToGemini]);
+  }, [isListening, initializeChat, sendToGemini, isCapturingTabAudio, selectedDeviceId]);
 
   /**
    * Requests microphone permissions and populates the list of available audio devices.

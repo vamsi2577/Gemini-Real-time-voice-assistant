@@ -331,12 +331,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </button>
                 {isCapturingTabAudio && (
                      <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
-                        <p className="font-bold text-cyan-400">Tab Audio Capture is Active</p>
+                        <p className="font-bold text-cyan-400">Action Required for Tab Transcription</p>
                         <p className="text-gray-400">
-                           The application is ready to capture audio from the shared tab. To start transcribing, press the microphone button.
+                           To transcribe the captured audio and isolate it from your microphone, you <strong>must</strong> select a virtual audio device (e.g., "Stereo Mix" or a third-party loopback tool) from the <strong>Microphone</strong> dropdown above.
                         </p>
                          <p className="text-gray-400">
-                            <strong>For best results</strong>, select a system loopback device (e.g., "Stereo Mix" or a virtual audio device) from the <strong>Microphone</strong> dropdown above to capture audio directly.
+                            The application will then use that source when you press the listen button. Using 'Default Microphone' will not capture tab audio.
                         </p>
                         <a href="https://github.com/existential-audio/BlackHole" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">
                             Learn how to set up a virtual audio device.
