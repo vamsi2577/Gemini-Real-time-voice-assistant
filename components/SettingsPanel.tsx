@@ -1,99 +1,368 @@
-import React from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import logger from '../utils/logger';
+import type { FileAttachment } from '../types';
+import type { Metrics } from '../App';
+import ChevronDownIcon from './icons/ChevronDownIcon';
+import ChevronUpIcon from './icons/ChevronUpIcon';
 
 /**
  * Props for the SettingsPanel component.
  */
 export interface SettingsPanelProps {
-  /** The current system prompt for the AI assistant. */
   systemPrompt: string;
-  /** Callback function to update the system prompt. */
   setSystemPrompt: (prompt: string) => void;
-  /** The current private data/context for the AI. */
   privateData: string;
-  /** Callback function to update the private data. */
   setPrivateData: (data: string) => void;
-  /** A boolean indicating if the assistant is currently listening to audio. */
   isListening: boolean;
-  // FIX: Removed apiKey and setApiKey props. The API key is managed via environment variables.
-  /** Callback function to toggle the visibility of the metrics panel. */
-  onToggleMetrics: () => void;
+  isAutoScrollEnabled: boolean;
+  setIsAutoScrollEnabled: (enabled: boolean) => void;
+  isTextInputEnabled: boolean;
+  setIsTextInputEnabled: (enabled: boolean) => void;
+  attachedFiles: FileAttachment[];
+  onFileAttach: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onFileRemove: (index: number) => void;
+  metrics: Metrics;
+  audioDevices: MediaDeviceInfo[];
+  selectedDeviceId: string;
+  setSelectedDeviceId: (deviceId: string) => void;
+  onLoadAudioDevices: () => void;
+  isCapturingTabAudio: boolean;
+  onToggleTabAudioCapture: () => void;
 }
 
+// --- Helper Icons (defined locally) ---
+const EditIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
+        <path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" />
+        <path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" />
+    </svg>
+);
+const PaperclipIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+    </svg>
+);
+const TrashIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+    </svg>
+);
+const DocumentTextIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <polyline points="10 9 9 9 8 9"></polyline>
+    </svg>
+);
+const SpeakerWaveIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M11 5L6 9H2v6h4l5 4V5z"></path>
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+    </svg>
+);
+
+
 /**
- * A component that provides UI for configuring the AI assistant's behavior.
- * Users can set a system prompt and provide personalization data.
+ * A styled wrapper for each section in the settings panel.
  */
-const SettingsPanel: React.FC<SettingsPanelProps> = ({
-  systemPrompt,
-  setSystemPrompt,
-  privateData,
-  setPrivateData,
-  isListening,
-  onToggleMetrics,
-}) => {
+const SettingsSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <div className="bg-gray-700/50 border border-gray-600/70 rounded-lg">
+        <h3 className="text-sm font-semibold text-gray-200 px-4 py-2 border-b border-gray-600/70">
+            {title}
+        </h3>
+        <div className="p-4 space-y-4">
+            {children}
+        </div>
+    </div>
+);
 
-  /**
-   * Handles changes to the system prompt textarea and logs the event.
-   * @param {React.ChangeEvent<HTMLTextAreaElement>} e - The change event.
-   */
-  const handleSystemPromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    logger.info('System prompt changed.');
-    setSystemPrompt(e.target.value);
+/**
+ * A modern, interactive component for displaying and editing a text value.
+ */
+const EditableSection: React.FC<{
+  value: string;
+  onSave: (newValue: string) => void;
+  isListening: boolean;
+  placeholder: string;
+  rows?: number;
+}> = ({ value, onSave, isListening, placeholder, rows = 3 }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState(value);
+
+  useEffect(() => {
+    if (!isEditing) setTempValue(value);
+  }, [value, isEditing]);
+
+  const handleSave = () => {
+    onSave(tempValue);
+    setIsEditing(false);
   };
+  const handleCancel = () => setIsEditing(false);
+  const handleEdit = () => !isListening && setIsEditing(true);
 
-  /**
-   * Handles changes to the private data textarea and logs the event.
-   * @param {React.ChangeEvent<HTMLTextAreaElement>} e - The change event.
-   */
-  const handlePrivateDataChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    logger.info('Private data changed.');
-    setPrivateData(e.target.value);
-  };
-
-  // FIX: Removed handleApiKeyChange function as API key input is removed.
+  if (isEditing) {
+    return (
+      <div className="space-y-3">
+        <textarea
+          rows={rows}
+          className="w-full bg-gray-900 border border-gray-600 rounded-md p-2 text-gray-100 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition"
+          value={tempValue}
+          onChange={(e) => setTempValue(e.target.value)}
+          placeholder={placeholder}
+          aria-label={placeholder}
+        />
+        <div className="flex justify-end items-center gap-2">
+          <button
+            onClick={handleCancel}
+            className="bg-gray-600 hover:bg-gray-500 text-white font-semibold py-1 px-3 rounded-md text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-gray-400"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-1 px-3 rounded-md text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      {/* FIX: Removed API key input section. */}
-      <div>
-        <label htmlFor="system-prompt" className="block text-sm font-medium text-gray-300 mb-1">
-          System Prompt
-        </label>
-        <textarea
-          id="system-prompt"
-          rows={3}
-          className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-gray-100 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          value={systemPrompt}
-          onChange={handleSystemPromptChange}
-          disabled={isListening}
-          placeholder="e.g., You are a helpful assistant."
-          aria-label="System Prompt"
-        />
-      </div>
-      <div>
-        <label htmlFor="private-data" className="block text-sm font-medium text-gray-300 mb-1">
-          Personalization Data
-        </label>
-        <textarea
-          id="private-data"
-          rows={4}
-          className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-gray-100 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          value={privateData}
-          onChange={handlePrivateDataChange}
-          disabled={isListening}
-          placeholder="Add any private context here for the model to reference, e.g., 'My name is Alex. I am a software developer interested in AI.'"
-          aria-label="Personalization Data"
-        />
-      </div>
-      <div>
+    <div className="group relative">
         <button
-          onClick={onToggleMetrics}
-          className="w-full mt-2 bg-gray-600 hover:bg-gray-500 text-white font-semibold py-2 px-4 rounded-md transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500"
-          aria-label="Show session metrics and API info"
+            onClick={handleEdit}
+            disabled={isListening}
+            className="absolute top-1 right-1 p-1.5 text-gray-400 bg-gray-700/0 group-hover:bg-gray-700/80 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-0"
+            aria-label="Edit prompt"
         >
-          Show Session Metrics
+            <EditIcon className="w-4 h-4" />
         </button>
+        <p className="text-gray-300 text-sm whitespace-pre-wrap break-words transition-all duration-300 ease-in-out">
+            {value || <span className="text-gray-500 italic">{placeholder}</span>}
+        </p>
+    </div>
+  );
+};
+
+
+/**
+ * Formats file size into a human-readable string (KB, MB).
+ */
+const formatBytes = (bytes: number, decimals = 2): string => {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+};
+
+
+/**
+ * A reusable component for a single metric display.
+ */
+const MetricDisplay: React.FC<{ label: string; value: string | number | null; unit?: string }> = ({ label, value, unit }) => (
+    <div className="flex justify-between items-baseline text-sm py-1">
+        <p className="text-gray-400">{label}</p>
+        <p className="font-mono text-cyan-300">
+            {value ?? '...'}
+            {value !== null && unit && <span className="text-gray-500 ml-1.5">{unit}</span>}
+        </p>
+    </div>
+);
+
+
+const formatMs = (time: number | null) => time !== null ? time.toFixed(0) : null;
+const formatCost = (cost: number) => `$${cost.toFixed(6)}`;
+
+
+/**
+ * Main settings panel component with a modernized UI/UX.
+ */
+const SettingsPanel: React.FC<SettingsPanelProps> = ({
+  systemPrompt, setSystemPrompt, privateData, setPrivateData, isListening,
+  isAutoScrollEnabled, setIsAutoScrollEnabled, isTextInputEnabled, setIsTextInputEnabled,
+  attachedFiles, onFileAttach, onFileRemove, metrics, audioDevices, selectedDeviceId,
+  setSelectedDeviceId, onLoadAudioDevices, isCapturingTabAudio, onToggleTabAudioCapture
+}) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isMetricsVisible, setIsMetricsVisible] = useState(false);
+  const totalSessionTokens = metrics.sessionPromptTokens + metrics.sessionResponseTokens;
+
+  // When the settings panel is opened, load the list of audio devices.
+  useEffect(() => {
+    onLoadAudioDevices();
+  }, [onLoadAudioDevices]);
+
+  return (
+    <div className="space-y-6">
+      <SettingsSection title="System Prompt">
+        <EditableSection
+          value={systemPrompt}
+          onSave={setSystemPrompt}
+          isListening={isListening}
+          placeholder="e.g., You are a helpful assistant."
+          rows={4}
+        />
+      </SettingsSection>
+      
+      <SettingsSection title="Personalization & Attachments">
+        <EditableSection
+          value={privateData}
+          onSave={setPrivateData}
+          isListening={isListening}
+          placeholder="Add any private context here for the model to reference, e.g., 'My name is Alex.'"
+          rows={5}
+        />
+        <div className="space-y-2">
+            {attachedFiles.map((file, index) => (
+                <div key={index} className="group flex items-center justify-between bg-gray-800/50 p-2 rounded-md text-sm hover:bg-gray-800/80 transition-colors">
+                    <div className="flex items-center gap-3 overflow-hidden">
+                        <DocumentTextIcon className="w-5 h-5 text-cyan-400 flex-shrink-0" />
+                        <span className="text-gray-200 truncate" title={file.name}>{file.name}</span>
+                        <span className="text-xs text-gray-500 flex-shrink-0">{formatBytes(file.size)}</span>
+                    </div>
+                    <button
+                        onClick={() => onFileRemove(index)}
+                        disabled={isListening}
+                        className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity disabled:opacity-0"
+                        aria-label={`Remove ${file.name}`}
+                    >
+                        <TrashIcon className="w-4 h-4" />
+                    </button>
+                </div>
+            ))}
+        </div>
+        <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isListening}
+            className="w-full flex items-center justify-center gap-2 border-2 border-dashed border-gray-600 hover:border-cyan-500 hover:text-cyan-400 text-gray-400 font-semibold py-2 px-3 rounded-lg text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:border-gray-600 disabled:hover:text-gray-400"
+        >
+            <PaperclipIcon className="w-4 h-4" />
+            <span>Attach Files</span>
+        </button>
+        <p className="text-xs text-gray-500 -mt-2 text-center">
+            Supported: Images, TXT, PDF, DOCX. Legacy .doc files are not supported.
+        </p>
+        <input type="file" multiple ref={fileInputRef} onChange={onFileAttach} className="hidden" aria-hidden="true" accept="image/*,text/plain,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+      </SettingsSection>
+      
+      <SettingsSection title="Preferences">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+              <label htmlFor="auto-scroll-toggle" className="text-sm font-medium text-gray-300 cursor-pointer select-none">
+              Enable Auto-Scroll
+              </label>
+              <button type="button" id="auto-scroll-toggle" role="switch" aria-checked={isAutoScrollEnabled} onClick={() => setIsAutoScrollEnabled(!isAutoScrollEnabled)} disabled={isListening} className={`${isAutoScrollEnabled ? 'bg-cyan-500' : 'bg-gray-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed`} aria-label="Enable auto-scroll">
+              <span aria-hidden="true" className={`${isAutoScrollEnabled ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`} />
+              </button>
+          </div>
+          <div className="flex items-center justify-between">
+              <label htmlFor="text-input-toggle" className="text-sm font-medium text-gray-300 cursor-pointer select-none">
+              Enable Text Input
+              </label>
+              <button type="button" id="text-input-toggle" role="switch" aria-checked={isTextInputEnabled} onClick={() => setIsTextInputEnabled(!isTextInputEnabled)} disabled={isListening} className={`${isTextInputEnabled ? 'bg-cyan-500' : 'bg-gray-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed`} aria-label="Enable text input">
+              <span aria-hidden="true" className={`${isTextInputEnabled ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`} />
+              </button>
+          </div>
+           <div>
+                <label htmlFor="mic-select" className="block text-sm font-medium text-gray-300 mb-2">
+                    Microphone
+                </label>
+                <select
+                    id="mic-select"
+                    value={selectedDeviceId}
+                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                    disabled={isListening || audioDevices.length === 0}
+                    className="w-full bg-gray-900 border border-gray-600 rounded-md p-2 text-gray-100 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <option value="default">Default Microphone</option>
+                    {audioDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                            {device.label || `Microphone ${audioDevices.indexOf(device) + 1}`}
+                        </option>
+                    ))}
+                </select>
+                 <p className="text-xs text-gray-500 mt-2">
+                    Note: This sets a preference, but the browser may still use the system's default device.
+                </p>
+            </div>
+             <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                    External Audio Source
+                </label>
+                <button
+                    onClick={onToggleTabAudioCapture}
+                    disabled={isListening}
+                    className={`w-full flex items-center justify-center gap-2 font-semibold py-2 px-3 rounded-lg text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed ${
+                        isCapturingTabAudio
+                        ? 'bg-red-600 hover:bg-red-500 text-white focus:ring-red-500'
+                        : 'bg-gray-600 hover:bg-gray-500 text-white focus:ring-gray-400'
+                    }`}
+                >
+                    <SpeakerWaveIcon className="w-4 h-4" />
+                    <span>{isCapturingTabAudio ? 'Stop Capturing Audio' : 'Capture Tab Audio'}</span>
+                </button>
+                {isCapturingTabAudio && (
+                     <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
+                        <p className="font-bold text-cyan-400">Action Required: Select Audio Source</p>
+                        <p className="text-gray-400">
+                            Tab audio is captured. To transcribe it, select your system's loopback device (e.g., "Stereo Mix" or a virtual audio device like BlackHole) from the <strong>Microphone</strong> dropdown above.
+                        </p>
+                        <a href="https://github.com/existential-audio/BlackHole" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">
+                            Learn more about virtual audio devices.
+                        </a>
+                    </div>
+                )}
+            </div>
+        </div>
+      </SettingsSection>
+      
+       <div className="bg-gray-700/50 border border-gray-600/70 rounded-lg">
+        <button
+          onClick={() => setIsMetricsVisible(!isMetricsVisible)}
+          className="w-full flex justify-between items-center text-left text-sm font-semibold text-gray-200 hover:bg-gray-700/60 p-4 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-cyan-500 rounded-t-lg"
+          aria-expanded={isMetricsVisible}
+          aria-controls="metrics-details"
+        >
+          <span>Session Metrics & Info</span>
+          {isMetricsVisible ? <ChevronUpIcon className="w-5 h-5 text-gray-400" /> : <ChevronDownIcon className="w-5 h-5 text-gray-400" />}
+        </button>
+        {isMetricsVisible && (
+          <div id="metrics-details" className="p-4 border-t border-gray-600/70 space-y-4">
+              <div>
+                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Last Interaction</h4>
+                  <div className="divide-y divide-gray-700">
+                      <MetricDisplay label="Time to First Chunk" value={formatMs(metrics.timeToFirstChunk)} unit="ms" />
+                      <MetricDisplay label="Total Response Time" value={formatMs(metrics.totalResponseTime)} unit="ms" />
+                      <MetricDisplay label="Prompt Tokens" value={metrics.lastPromptTokens} />
+                      <MetricDisplay label="Response Tokens" value={metrics.lastResponseTokens} />
+                  </div>
+              </div>
+              <div>
+                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Session Totals</h4>
+                   <div className="divide-y divide-gray-700">
+                      <MetricDisplay label="Prompt Tokens" value={metrics.sessionPromptTokens} />
+                      <MetricDisplay label="Response Tokens" value={metrics.sessionResponseTokens} />
+                      <MetricDisplay label="Total Tokens" value={totalSessionTokens} />
+                      <MetricDisplay label="Estimated Cost" value={formatCost(metrics.estimatedCost)} />
+                  </div>
+              </div>
+              <div>
+                  <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">API Info</h4>
+                  <div className="divide-y divide-gray-700">
+                    <MetricDisplay label="Model Name" value="gemini-2.5-flash" />
+                  </div>
+              </div>
+          </div>
+        )}
       </div>
     </div>
   );

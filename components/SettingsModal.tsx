@@ -22,7 +22,7 @@ const SettingsModal: React.FC<SettingsModalProps> = (props) => {
   return (
     // Backdrop overlay
     <div
-      className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -30,7 +30,7 @@ const SettingsModal: React.FC<SettingsModalProps> = (props) => {
     >
       {/* Modal container */}
       <div
-        className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md transform transition-all"
+        className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-xl transform transition-all"
         onClick={(e) => e.stopPropagation()} // Prevent clicks inside the panel from closing it
       >
         {/* Header */}
@@ -48,7 +48,7 @@ const SettingsModal: React.FC<SettingsModalProps> = (props) => {
         </header>
 
         {/* Body */}
-        <div className="p-4 sm:p-6">
+        <div className="p-4 sm:p-6 max-h-[80vh] overflow-y-auto">
           <SettingsPanel {...settingsPanelProps} />
         </div>
       </div>

@@ -13,6 +13,8 @@ interface ConversationViewProps {
   interimTranscript: string;
   /** A boolean indicating if the assistant is currently listening. */
   isListening: boolean;
+  /** A boolean indicating if auto-scroll is enabled. */
+  isAutoScrollEnabled: boolean;
 }
 
 /**
@@ -34,18 +36,21 @@ const ConversationView: React.FC<ConversationViewProps> = ({
     messages, 
     interimTranscript, 
     isListening,
+    isAutoScrollEnabled,
 }) => {
   // A ref to the end of the message list, used for auto-scrolling.
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
 
-  // Effect to automatically scroll to the latest message.
+  // Effect to automatically scroll to the latest message if enabled.
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, interimTranscript]);
+    if (isAutoScrollEnabled) {
+        endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, interimTranscript, isAutoScrollEnabled]);
 
   return (
-    <div className="flex-1 bg-gray-800 p-3 sm:p-4 rounded-lg shadow-lg overflow-y-auto" role="log" aria-live="polite">
-      <div className="space-y-4 pb-20 sm:pb-24">
+    <div className="flex-1 bg-gray-800 rounded-t-lg shadow-lg overflow-y-auto" role="log" aria-live="polite">
+      <div className="space-y-4 p-3 sm:p-4">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex items-start gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
             {msg.role === 'model' && (
@@ -86,9 +91,9 @@ const ConversationView: React.FC<ConversationViewProps> = ({
                 <p className="text-sm">Click the microphone button to begin.</p>
             </div>
         )}
+        {/* This empty div is the target for auto-scrolling */}
+        <div ref={endOfMessagesRef} />
       </div>
-      {/* This empty div is the target for auto-scrolling */}
-      <div ref={endOfMessagesRef} />
     </div>
   );
 };

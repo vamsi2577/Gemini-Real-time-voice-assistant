@@ -1,46 +1,42 @@
 # Gemini Real-time Voice Assistant - Full Documentation
 
-A multimodal, real-time AI assistant that listens to your voice and responds in text. It supports conversation history, custom system prompts, and private data for personalized interactions, all powered by the Google Gemini API.
+A multimodal, real-time AI assistant that listens to your voice or accepts text input and responds in text. It supports conversation history, custom system prompts, and file attachments for personalized interactions, all powered by the Google Gemini API.
 
 ---
 
 ## Features
 
--   **Responsive UI with Collapsible Header**: The UI is optimized for small screens. The header is hidden by default on narrow viewports and can be revealed with a toggle button, maximizing space for the conversation.
--   **Adaptive Controls**: The main microphone button resizes, appearing smaller on small screens and larger on desktops for better usability.
--   **Easy Configuration & Session Management**: App controls are grouped in the header. Settings are tucked away in a modal window, accessible via a gear icon. The "New Session" button is located right next to it, providing clear, top-level controls.
--   **Intuitive API Key Handling**: The app provides clear, non-intrusive visual cues if the API key is missing:
-    -   A red dot appears on the settings icon.
-    -   A warning message is displayed in the main conversation area.
-    -   The microphone button is visually disabled.
--   **Local API Key Storage**: Set your Gemini API key directly in the UI—it's saved locally in your browser for convenience.
+-   **Dual Input Modes**: Seamlessly switch between voice and text input. The UI features a comprehensive input bar with a microphone button and a dynamic-height text area. This can be toggled to a voice-only floating button for a minimal interface.
+-   **File Attachments for Context**: Provide files directly to the assistant for context. Supported formats include:
+    -   **Images**: (JPG, PNG, WebP) for visual analysis.
+    -   **Documents**: (PDF, DOCX) and plain text (.TXT). The app securely parses these on the client-side to extract text content.
+-   **Capture Browser Tab Audio**: Listen to and transcribe audio from another browser tab (e.g., a meeting or a video). Due to browser security, this feature guides you to use a system-level audio loopback device (like "Stereo Mix" on Windows or a virtual audio device on macOS) to route the captured audio for transcription.
+-   **Modern, Interactive Settings Panel**: A redesigned UI for configuration, organized into clean, card-based sections.
+    -   **Click-to-Edit Prompts**: System prompts are displayed as clean text and transform into an editable area on-demand, saving space.
+    -   **Hover-to-Reveal**: Long prompts are collapsed by default and expand on hover for a cleaner look.
+    -   **Microphone Selection**: Choose your preferred audio input device from a dropdown list of available microphones.
+-   **Integrated Session Metrics**: The performance and cost metrics are now integrated as a collapsible section within the settings panel, removing the need for a separate modal.
 -   **Real-time Voice Transcription**: Uses the browser's native Web Speech API to transcribe your voice into text as you speak.
 -   **Streaming AI Responses**: Receives and displays responses from the Gemini model in real-time, creating a fluid conversational experience.
--   **Continuous Conversation**: The assistant can listen continuously, processing spoken commands and questions as they are finalized.
 -   **Customizable AI Persona**: Use the "System Prompt" to define the assistant's personality, role, and response style.
--   **Contextual Awareness**: Provide "Personalization Data" to give the AI private context (like your name, interests, or project details) for more relevant answers.
--   **Modern & Responsive UI**: A clean, intuitive interface built with React and Tailwind CSS that works on various screen sizes.
--   **Performance Monitoring**: Built-in logging for key events and performance metrics, such as "time to first chunk" and total response time.
--   **Session Metrics & Info Panel**: A toggleable window that displays:
-    -   **Live Performance**: Latency (time to first chunk) and total response time for the last interaction.
-    -   **Token Counts**: Estimated token usage for the last prompt and response.
-    -   **Session Totals**: Cumulative token counts for the entire conversation.
-    -   **Cost Estimation**: A running estimate of the API costs for the current session.
-    -   **API Config**: The name of the model currently in use.
+-   **Contextual Awareness**: Provide "Personalization Data" to give the AI private context (like your name or project details) for more relevant answers.
+-   **Responsive UI**: A clean, intuitive interface built with React and Tailwind CSS that works on various screen sizes.
 
 ## Architecture & Tech Stack
 
-The application is a client-side single-page application (SPA) built with a modern frontend stack.
+The application is a client-side single-page application (SPA).
 
--   **Frontend Framework**: **React 19** with TypeScript for building the user interface.
+-   **Frontend Framework**: **React 19** with TypeScript.
 -   **Styling**: **Tailwind CSS** for a utility-first styling workflow.
 -   **AI Integration**: **Google Gemini API** via the `@google/genai` SDK.
-    -   **Model**: `gemini-2.5-flash` is used for its excellent balance of speed and capability, making it ideal for real-time chat.
--   **Voice Recognition**: **Web Speech API**, a browser-native API for speech-to-text conversion.
+    -   **Model**: `gemini-2.5-flash` is used for its excellent balance of speed and capability.
+-   **Voice Recognition**: **Web Speech API**, a browser-native API for speech-to-text.
+-   **Tab Audio Capture**: **Screen Capture API** (`getDisplayMedia`) to capture audio streams from other browser tabs.
+-   **Document Parsing**:
+    -   **PDF.js**: For client-side parsing of PDF files.
+    -   **Mammoth.js**: For client-side extraction of text from DOCX files.
 
 ## Application Flow
-
-The following diagram illustrates the data flow from user input to the AI's response:
 
 ```mermaid
 sequenceDiagram
@@ -50,16 +46,18 @@ sequenceDiagram
     participant Gemini Service
     participant Google Gemini API
 
-    User->>Browser UI (React): Clicks Floating Microphone Button
-    Browser UI (React)->>Web Speech API: start()
-    Web Speech API-->>Browser UI (React): onstart (UI updates to 'Listening...')
-    User->>Web Speech API: Speaks
-    Web Speech API-->>Browser UI (React): onresult (interim transcript)
-    Browser UI (React)-->>Browser UI (React): Displays interim transcript
-    Web Speech API-->>Browser UI (React): onresult (final transcript)
-    Browser UI (React)->>Gemini Service: sendToGemini(finalTranscript)
-    note right of Browser UI (React): Calculates prompt tokens & updates metrics state
-    Gemini Service->>Google Gemini API: sendMessageStream(transcript)
+    alt Voice Input
+        User->>Browser UI (React): Clicks Microphone Button
+        Browser UI (React)->>Web Speech API: start()
+        Web Speech API-->>Browser UI (React): onresult (final transcript)
+        Browser UI (React)->>Gemini Service: sendToGemini(finalTranscript)
+    else Text Input
+        User->>Browser UI (React): Types message and clicks Send
+        Browser UI (React)->>Gemini Service: sendToGemini(textMessage)
+    end
+    
+    note right of Browser UI (React): Calculates prompt tokens & updates metrics
+    Gemini Service->>Google Gemini API: sendMessageStream(text)
     note right of Gemini Service: Creates a streaming request
 
     Google Gemini API-->>Gemini Service: Stream Chunk 1
@@ -67,90 +65,85 @@ sequenceDiagram
     note right of Browser UI (React): Measures 'Time to First Chunk'
     Browser UI (React)-->>User: Renders first part of response
 
-    Google Gemini API-->>Gemini Service: Stream Chunk 2
-    Gemini Service-->>Browser UI (React): Appends to message state
-    Browser UI (React)-->>User: Renders more of the response
-
     loop Until stream ends
         Google Gemini API-->>Gemini Service: Stream Chunk N
-        Gemini Service-->>Browser UI (React): Updates message state
+        Gemini Service-->>Browser UI (React): Appends to message state
     end
 
     Google Gemini API-->>Gemini Service: Stream ends
-    note right of Browser UI (React): Calculates total time, response tokens, and estimated cost.
-    Web Speech API->>Web Speech API: Continues listening for next input...
+    note right of Browser UI (React): Calculates total time, response tokens, and cost.
 ```
 
 ## APIs and Services
 
 ### 1. Google Gemini API (`@google/genai`)
 
--   **Description**: This is the core AI service that provides conversational intelligence.
+-   **Description**: The core AI service that provides conversational intelligence.
 -   **Model Used**: `gemini-2.5-flash`
 -   **Key Methods**:
-    -   `ai.chats.create()`: Initializes a new chat session. We configure it with:
-        -   `systemInstruction`: To set the AI's persona and instructions from the "System Prompt" and "Personalization Data" text areas.
-        -   `thinkingConfig: { thinkingBudget: 0 }`: This is a crucial optimization for real-time chat. It disables the model's "thinking" phase, significantly reducing the time to the first token (latency) and making the conversation feel more immediate.
-    -   `chat.sendMessageStream()`: Sends the user's transcribed text and returns a stream of response chunks, which are processed to display the answer word-by-word.
+    -   `ai.chats.create()`: Initializes a new chat session. It's configured with:
+        -   `systemInstruction`: To set the AI's persona.
+        -   `history`: To provide initial context from "Personalization Data" and attached files.
+        -   `thinkingConfig: { thinkingBudget: 0 }`: An optimization to disable the model's "thinking" phase, significantly reducing latency for a real-time feel.
+    -   `chat.sendMessageStream()`: Sends the user's text and returns a stream of response chunks.
 
 ### 2. Web Speech API
 
--   **Description**: A browser-integrated API for performing voice recognition.
--   **Interface**: `window.SpeechRecognition` or `window.webkitSpeechRecognition` (for compatibility).
+-   **Description**: A browser-integrated API for voice recognition.
+-   **Interface**: `window.SpeechRecognition` or `window.webkitSpeechRecognition`.
 -   **Key Configuration**:
-    -   `continuous = true`: The API continues to listen even after the user pauses, which is essential for an ongoing conversation.
-    -   `interimResults = true`: The API provides real-time, non-final transcripts as the user is speaking. This is displayed in the UI to give the user immediate feedback that their speech is being recognized.
--   **Events Handled**:
-    -   `onstart`: Fired when recognition begins. Used to update the UI state to `isListening`.
-    -   `onend`: Fired when recognition ends. Used to reset state or auto-restart the listener.
-    -   `onerror`: Handles recognition errors (e.g., no microphone access).
-    -   `onresult`: The core event that provides transcript data, both interim and final.
+    -   `continuous = true`: The API continues to listen even after the user pauses.
+    -   `interimResults = true`: The API provides real-time, non-final transcripts as the user speaks for immediate feedback.
+-   **Microphone Control**: The app allows users to select a preferred audio input device, although the browser ultimately controls which device is used.
+
+### 3. Screen Capture API (`getDisplayMedia`)
+-   **Description**: Used to capture the contents of a display or part thereof. This app uses it specifically to capture the audio output of another browser tab.
+-   **Security**: This API is highly secure and requires explicit, transient user permission for each use. A web application cannot directly process the captured audio stream for transcription with the `Web Speech API`.
+-   **Implementation**: The app initiates the capture and then guides the user to manually route the audio using a system-level tool (like a virtual audio device) which can then be selected from the app's microphone list. This respects the browser's security model while enabling the desired functionality.
 
 ## In-App Configuration
 
-The UI provides three inputs for real-time configuration of the AI's behavior for the current session:
+The settings panel provides inputs for real-time configuration of the AI's behavior:
 
--   **Gemini API Key**: Your personal API key from Google AI Studio. This is required for the app to function and is saved in your browser's local storage for convenience.
 -   **System Prompt**: Defines the AI's role, personality, and constraints.
     -   *Example*: "You are a friendly pirate who speaks in sea shanties."
--   **Personalization Data**: Provides specific, private information for the AI to use as context.
-    -   *Example*: "My name is Captain Jane. My project is codenamed 'Treasure Map'."
+-   **Personalization Data & Attachments**: Provides specific, private information for the AI to use as context.
+    -   *Example Text*: "My name is Captain Jane. My project is codenamed 'Treasure Map'."
+    -   *Example Attachments*: Uploading a PDF of project requirements or a DOCX of meeting notes.
 
 ## Version History
 
--   **v1.9.0** (Current)
-    -   Added a responsive, collapsible header that hides on small screens to maximize space.
-    -   Added a toggle button to show/hide the header on small screens.
-    -   The floating microphone button is now smaller on small screens and larger on desktops.
+-   **v2.5.0** (Current)
+    -   Added "Capture Tab Audio" feature. The app can now capture audio from other tabs and guides the user on how to route this audio for transcription using a virtual input device.
+-   **v2.4.0**
+    -   Comprehensive update of all documentation, comments, and logs to reflect the latest features.
+    -   Corrected all documentation to use `process.env.API_KEY` instead of a UI input.
+-   **v2.3.0**
+    -   Added microphone selection dropdown in the settings panel.
+-   **v2.2.0**
+    -   Enhanced textarea to have dynamic height with a scrollable max-height.
+-   **v2.1.0**
+    -   Modernized the entire "Assistant Configuration" UI with a card-based layout, improved interactivity, and refined aesthetics.
+-   **v2.0.0**
+    -   Integrated the "Session Metrics" panel as a collapsible section within the settings modal, removing the separate pop-up.
+-   **v1.12.0**
+    -   Added client-side support for parsing PDF (`pdf.js`) and DOCX (`mammoth.js`) files to extract text for context.
+-   **v1.11.0**
+    -   Added file attachment capability for images and plain text files.
+-   **v1.10.0**
+    -   Added a toggleable text input bar, allowing users to type messages. The UI can be switched between text+voice and voice-only modes.
+-   **v1.9.0**
+    -   Added responsive, collapsible header.
+    -   The microphone button is now adaptive to screen size.
 -   **v1.8.0**
-    -   Improved UX for missing API key state with clearer, non-intrusive visual cues (red dot on settings, highlighted prompt, grayed-out mic).
-    -   Removed idle status text (e.g., "Click mic to start") for a cleaner UI.
-    -   Increased the size of the microphone button for better usability.
+    -   Removed API key input from the UI in favor of environment variables.
 -   **v1.7.0**
-    -   Moved "New Session" button from floating controls to the main application header next to the settings icon.
-    -   Floating controls now only contain the microphone button.
+    -   Moved "New Session" button to the main application header.
 -   **v1.6.0**
-    -   Removed the bottom controls panel to save space.
-    -   Integrated controls (microphone, new session) as floating buttons in the bottom-right of the conversation view.
-    -   Adjusted layout to ensure floating controls do not obscure conversation text.
+    -   Replaced bottom controls panel with floating action buttons.
 -   **v1.5.0**
-    -   Enhanced UI for small screens (e.g., 350x250px).
-    -   Moved Assistant Configuration into a modal accessible via a new settings icon.
-    -   Reduced sizes of buttons, icons, and padding for a more compact layout.
+    -   Moved Assistant Configuration into a modal window.
 -   **v1.4.0**
     -   Added a toggleable "Session Metrics" panel.
-    -   The panel displays performance metrics (latency, response time), estimated token counts, and estimated session cost.
--   **v1.3.0**
-    -   Added UI input for Gemini API key.
-    -   Key is now saved to and retrieved from browser's local storage.
-    -   Updated app logic to dynamically initialize the AI service with the user-provided key.
--   **v1.2.0**
-    -   Restructured documentation into `README.md` and `docs/DOCUMENTATION.md`.
--   **v1.1.0**
-    -   Added `README.md` with comprehensive documentation.
-    -   Added structured logging (`utils/logger.ts`) for events and performance.
-    -   Integrated detailed code comments across all components and services.
-    -   Added ARIA attributes for improved accessibility.
 -   **v1.0.0**
-    -   Initial release.
-    -   Core features: voice input, streaming text output, conversation history, and settings panel.
+    -   Initial release with core features: voice input, streaming text output, and basic settings.

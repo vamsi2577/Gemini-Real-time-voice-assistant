@@ -13,3 +13,17 @@ export interface Message {
   /** The text content of the message. */
   text: string;
 }
+
+/**
+ * Represents a file that has been attached by the user for context.
+ */
+export interface FileAttachment {
+  /** The name of the file (e.g., 'document.pdf'). */
+  name: string;
+  /** The IANA MIME type of the file (e.g., 'application/pdf'). */
+  mimeType: string;
+  /** The size of the file in bytes. */
+  size: number;
+  /** The base64-encoded string representation of the file's content. */
+  data: string;
+}

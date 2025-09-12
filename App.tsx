@@ -1,23 +1,36 @@
 /**
  * @fileoverview The main application component for the Gemini Real-time Voice Assistant.
- * It manages state, handles speech recognition, and orchestrates communication with the Gemini API.
+ * It manages state, handles speech recognition and text input, orchestrates communication
+ * with the Gemini API, and supports file attachments for contextual conversations.
  */
 
 // FIX: Corrected React import from 'React, aistudio' to 'React'.
 import React from 'react';
-import type { Chat } from '@google/genai';
+import type { Chat, Content, Part } from '@google/genai';
 import { createChatSession } from './services/geminiService';
-import type { Message } from './types';
+import type { Message, FileAttachment } from './types';
 import SettingsPanel, { SettingsPanelProps } from './components/SettingsPanel';
 import ConversationView from './components/ConversationView';
 import FloatingControls from './components/FloatingControls';
-import MetricsPanel from './components/MetricsPanel';
 import SettingsModal from './components/SettingsModal';
 import SettingsIcon from './components/icons/SettingsIcon';
 import NewSessionIcon from './components/icons/NewSessionIcon';
 import ChevronDownIcon from './components/icons/ChevronDownIcon';
 import ChevronUpIcon from './components/icons/ChevronUpIcon';
 import logger from './utils/logger';
+
+// --- Third-party Library Globals ---
+// Declare global variables for libraries loaded via <script> tags in index.html.
+// This informs TypeScript that these variables exist at runtime.
+declare var pdfjsLib: any;
+declare var mammoth: any;
+
+// Configure the worker for pdf.js. This is required for it to run in the browser.
+// We check if the library is loaded before trying to configure it.
+if (typeof pdfjsLib !== 'undefined') {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.5.136/pdf.worker.min.mjs`;
+}
+
 
 // --- Web Speech API Typings ---
 // The following interfaces provide minimal TypeScript definitions for the Web Speech API.
@@ -83,6 +96,9 @@ export interface Metrics {
 // --- Pricing Constants (placeholders, adjust as needed) ---
 const GEMINI_FLASH_INPUT_PRICE_PER_1M_TOKENS = 0.25; // Example price
 const GEMINI_FLASH_OUTPUT_PRICE_PER_1M_TOKENS = 0.50; // Example price
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
 
 /**
  * The root component of the application.
@@ -93,6 +109,7 @@ const App: React.FC = () => {
   // FIX: Removed apiKey state to comply with guidelines. API key must be from process.env.API_KEY.
   const [systemPrompt, setSystemPrompt] = React.useState('You are a helpful and concise real-time AI assistant. Your responses should be fast and to the point. The user is speaking to you, so your responses should be natural in a conversation.');
   const [privateData, setPrivateData] = React.useState('');
+  const [attachedFiles, setAttachedFiles] = React.useState<FileAttachment[]>([]);
   
   // State for conversation and UI
   const [messages, setMessages] = React.useState<Message[]>([]);
@@ -100,9 +117,17 @@ const App: React.FC = () => {
   const [interimTranscript, setInterimTranscript] = React.useState('');
   const [status, setStatus] = React.useState(''); // Status text is now minimal, used for active states.
   const [error, setError] = React.useState<string | null>(null);
-  const [showMetrics, setShowMetrics] = React.useState(false);
   const [showSettings, setShowSettings] = React.useState(false);
   const [isHeaderOpen, setIsHeaderOpen] = React.useState(false);
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = React.useState(false);
+  const [isTextInputEnabled, setIsTextInputEnabled] = React.useState(true);
+  const [textInputValue, setTextInputValue] = React.useState('');
+  const [isCapturingTabAudio, setIsCapturingTabAudio] = React.useState(false);
+
+  // State for hardware settings
+  const [audioDevices, setAudioDevices] = React.useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = React.useState<string>('default');
+
 
   // State for performance and cost metrics
   const [metrics, setMetrics] = React.useState<Metrics>({
@@ -121,6 +146,9 @@ const App: React.FC = () => {
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
   // This ref tracks if the user manually stopped the recognition, vs. it stopping on its own.
   const userStoppedRef = React.useRef<boolean>(true);
+  const tabAudioStreamRef = React.useRef<MediaStream | null>(null);
+  const audioElRef = React.useRef<HTMLAudioElement>(null);
+
 
   // FIX: Removed useEffect for saving API key to local storage.
 
@@ -135,31 +163,112 @@ const App: React.FC = () => {
   };
 
   /**
-   * Initializes a new Gemini chat session with the current system prompt and private data.
+   * Initializes a new Gemini chat session. This function compiles the system prompt,
+   * personalization data, and text from attached files into an initial context (history)
+   * for the model, then creates the chat instance.
    */
   const initializeChat = React.useCallback(() => {
-      // FIX: API key is now handled by geminiService, no need for a check here.
       logger.info('Initializing chat session.');
       try {
-        const fullSystemInstruction = `${systemPrompt}\n\n--- Private Data ---\n${privateData}`;
-        // FIX: createChatSession no longer takes an API key argument.
-        chatRef.current = createChatSession(fullSystemInstruction);
+        const fullSystemInstruction = systemPrompt;
+
+        let history: Content[] = [];
+
+        // If there's private data or attachments, construct an initial history turn.
+        if (privateData.trim() || attachedFiles.length > 0) {
+            const userParts: Part[] = [];
+
+            let contextIntro = 'Please use the following information and documents as context for our conversation:\n\n';
+            
+            // Add private data text if it exists.
+            if (privateData.trim()) {
+                contextIntro += privateData;
+            }
+            
+            // Define which MIME types contain text data that can be combined.
+            const textMimeTypes = [
+                'text/plain',
+                'application/pdf',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            ];
+
+            // Consolidate all text from private data and text-based files into one part.
+            let combinedTextContent = contextIntro;
+            const textFileNames: string[] = [];
+            attachedFiles.forEach(file => {
+                if (textMimeTypes.includes(file.mimeType)) {
+                    combinedTextContent += `\n\n--- Start of attached file: ${file.name} ---\n${file.data}\n--- End of attached file: ${file.name} ---`;
+                    textFileNames.push(file.name);
+                }
+            });
+            
+            if (textFileNames.length > 0) {
+              logger.info('Adding text from attached files to context:', textFileNames);
+            }
+
+            userParts.push({ text: combinedTextContent });
+
+            // Add file attachments that are not text (i.e., images).
+            const imageFileNames: string[] = [];
+            attachedFiles.forEach(file => {
+                if (file.mimeType.startsWith('image/')) {
+                    userParts.push({
+                        inlineData: {
+                            mimeType: file.mimeType,
+                            data: file.data,
+                        }
+                    });
+                    imageFileNames.push(file.name);
+                }
+            });
+            
+            if (imageFileNames.length > 0) {
+               logger.info('Adding image attachments to context:', imageFileNames);
+            }
+
+            history.push({
+                role: 'user',
+                parts: userParts,
+            });
+
+            // Add a priming model response.
+            history.push({
+                role: 'model',
+                parts: [{ text: "Understood. I have received the information and will use it as context." }]
+            });
+        }
         
-        // When a new chat is initialized, calculate the tokens for the system prompt.
-        const systemTokens = estimateTokens(fullSystemInstruction);
+        // FIX: createChatSession now accepts history.
+        chatRef.current = createChatSession(fullSystemInstruction, history);
+        
+        // Note: This is a rough client-side estimation. The actual token count
+        // is determined by the model's tokenizer on the server.
+        const systemAndHistoryTokens = history.reduce((acc, curr) => {
+            const turnTokens = curr.parts.reduce((turnAcc, part) => {
+                if ('text' in part && part.text) {
+                    return turnAcc + estimateTokens(part.text);
+                }
+                if ('inlineData' in part && part.inlineData.data) {
+                     return turnAcc + estimateTokens(part.inlineData.data);
+                }
+                return turnAcc;
+            }, 0);
+            return acc + turnTokens;
+        }, estimateTokens(fullSystemInstruction));
+
+
         setMetrics(prev => ({
             ...prev,
-            sessionPromptTokens: systemTokens, // Base prompt tokens for the session
+            sessionPromptTokens: systemAndHistoryTokens, // Base prompt tokens for the session
             sessionResponseTokens: 0,
             estimatedCost: 0, // Reset cost
         }));
 
       } catch (e) {
         logger.error("Failed to initialize chat session:", e);
-        // FIX: Updated error message to be more helpful.
         setError("Failed to initialize chat. Is the API_KEY environment variable set correctly?");
       }
-  }, [systemPrompt, privateData]);
+  }, [systemPrompt, privateData, attachedFiles]);
 
   /**
    * Sends a text message to the Gemini API and streams the response.
@@ -252,6 +361,155 @@ const App: React.FC = () => {
         setMessages(prev => prev.filter(msg => msg.id !== modelMessageId));
     }
   }, [initializeChat]);
+  
+  /**
+   * Handles sending a message from the text input bar.
+   * @param {string} text - The message text from the input.
+   */
+  const handleSendMessage = (text: string) => {
+    if (!text.trim()) {
+      return;
+    }
+    logger.info("Sending text message from input bar:", { text });
+    sendToGemini(text.trim());
+    setTextInputValue('');
+  };
+
+  /**
+   * Handles the file attachment process. It reads and parses supported file types
+   * (images, txt, pdf, docx) and rejects unsupported ones, all on the client-side.
+   * @param {React.ChangeEvent<HTMLInputElement>} event - The file input change event.
+   */
+  const handleFileAttach = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+
+    setError(null);
+    const fileReadPromises: Promise<FileAttachment>[] = [];
+
+    // Supported MIME types for different categories
+    const supportedImageTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+    const supportedTextTypes = ['text/plain'];
+    const supportedPdfTypes = ['application/pdf'];
+    const supportedDocxTypes = ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    const unsupportedDocTypes = ['application/msword'];
+
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        const errorMsg = `File ${file.name} is too large (max ${MAX_FILE_SIZE_MB}MB).`;
+        logger.warn(errorMsg);
+        setError(errorMsg);
+        continue;
+      }
+
+      const fileType = file.type;
+      let promise: Promise<FileAttachment> | null = null;
+      logger.info(`Processing file: ${file.name}, type: ${file.type}`);
+
+      if (supportedImageTypes.includes(fileType)) {
+        promise = new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = e => {
+            const result = e.target?.result as string;
+            if (result) {
+              resolve({ name: file.name, mimeType: file.type, size: file.size, data: result.split(',')[1] });
+            } else {
+              reject(new Error(`Failed to read image file ${file.name}`));
+            }
+          };
+          reader.onerror = err => reject(err);
+          reader.readAsDataURL(file);
+        });
+      } else if (supportedTextTypes.includes(fileType)) {
+        promise = new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = e => resolve({ name: file.name, mimeType: file.type, size: file.size, data: e.target?.result as string });
+          reader.onerror = err => reject(err);
+          reader.readAsText(file);
+        });
+      } else if (supportedPdfTypes.includes(fileType)) {
+        promise = new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              logger.info(`Parsing PDF: ${file.name}`);
+              const arrayBuffer = e.target?.result as ArrayBuffer;
+              const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+              let fullText = '';
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                fullText += textContent.items.map((item: any) => item.str).join(' ');
+                fullText += '\n'; // Add a newline between pages
+              }
+              logger.info(`Successfully parsed PDF: ${file.name}`);
+              resolve({ name: file.name, mimeType: file.type, size: file.size, data: fullText.trim() });
+            } catch (err) {
+              logger.error(`Failed to parse PDF file '${file.name}':`, err);
+              reject(new Error(`Could not read PDF file: ${file.name}`));
+            }
+          };
+          reader.onerror = err => reject(err);
+          reader.readAsArrayBuffer(file);
+        });
+      } else if (supportedDocxTypes.includes(fileType)) {
+        promise = new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              logger.info(`Parsing DOCX: ${file.name}`);
+              const arrayBuffer = e.target?.result as ArrayBuffer;
+              const result = await mammoth.extractRawText({ arrayBuffer });
+              logger.info(`Successfully parsed DOCX: ${file.name}`);
+              resolve({ name: file.name, mimeType: file.type, size: file.size, data: result.value });
+            } catch (err) {
+              logger.error(`Failed to parse DOCX file '${file.name}':`, err);
+              reject(new Error(`Could not read DOCX file: ${file.name}`));
+            }
+          };
+          reader.onerror = err => reject(err);
+          reader.readAsArrayBuffer(file);
+        });
+      } else if (unsupportedDocTypes.includes(fileType) || file.name.endsWith('.doc')) {
+        const errorMsg = `Legacy .doc files are not supported. Please save '${file.name}' as .docx or .pdf.`;
+        logger.warn(errorMsg);
+        setError(errorMsg);
+        continue;
+      } else {
+        const errorMsg = `File type "${fileType || 'unknown'}" for '${file.name}' is not supported.`;
+        logger.warn(errorMsg);
+        setError(errorMsg);
+        continue;
+      }
+
+      if (promise) {
+        fileReadPromises.push(promise);
+      }
+    }
+
+    Promise.all(fileReadPromises)
+      .then(newFiles => {
+        setAttachedFiles(prev => [...prev, ...newFiles]);
+        logger.info("Files attached successfully", { count: newFiles.length });
+      })
+      .catch(err => {
+        logger.error("Error processing attached files:", err);
+        setError("There was an error processing one or more attached files.");
+      });
+    
+    event.target.value = '';
+  };
+
+
+  /**
+   * Removes a file from the attachment list.
+   * @param {number} index - The index of the file to remove.
+   */
+  const handleFileRemove = (index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+    logger.info("File removed", { index });
+  };
+
 
   /**
    * Resets the application state to start a new conversation.
@@ -268,6 +526,7 @@ const App: React.FC = () => {
     setInterimTranscript('');
     setError(null);
     setStatus('');
+    setTextInputValue('');
     // Re-initialize the chat with potentially updated settings.
     initializeChat();
   }, [isListening, initializeChat]);
@@ -276,9 +535,6 @@ const App: React.FC = () => {
    * Toggles the speech recognition on and off.
    */
   const handleToggleListening = React.useCallback(() => {
-    // FIX: Removed check for API key, as it's now an environment variable dependency.
-    // The app will now attempt to initialize and throw an error if the key is missing.
-
     if (isListening) {
       // --- Stop Listening ---
       logger.info("User manually stopped listening.");
@@ -364,25 +620,128 @@ const App: React.FC = () => {
       recognitionRef.current.start();
     }
   }, [isListening, initializeChat, sendToGemini]);
+
+  /**
+   * Requests microphone permissions and populates the list of available audio devices.
+   * This is intended to be called when the settings panel is opened.
+   */
+  const handleLoadAudioDevices = React.useCallback(async () => {
+    logger.info("Attempting to load audio devices.");
+    if (audioDevices.length > 0) {
+      logger.info("Audio devices already loaded.");
+      return;
+    }
+
+    try {
+      // Request microphone permission. This is necessary to get device labels.
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Enumerate all media devices.
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      // Filter for only audio input devices.
+      const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
+      setAudioDevices(audioInputDevices);
+      logger.info("Audio devices loaded successfully.", { count: audioInputDevices.length });
+    } catch (err) {
+      logger.error("Could not get audio devices:", err);
+      setError("Could not access microphone list. Please grant permission in your browser settings.");
+    }
+  }, [audioDevices]);
+
+  /**
+    * Stops the tab audio capture stream.
+    */
+  const stopTabAudioCapture = React.useCallback(() => {
+    if (tabAudioStreamRef.current) {
+      logger.info("Stopping tab audio capture.");
+      tabAudioStreamRef.current.getTracks().forEach(track => track.stop());
+      tabAudioStreamRef.current = null;
+      if (audioElRef.current) {
+        audioElRef.current.srcObject = null;
+      }
+      setIsCapturingTabAudio(false);
+    }
+  }, []);
+  
+  /**
+    * Toggles the capture of audio from another browser tab.
+    */
+  const handleToggleTabAudioCapture = React.useCallback(async () => {
+    if (isCapturingTabAudio) {
+      stopTabAudioCapture();
+      return;
+    }
+
+    logger.info("Requesting to capture tab audio.");
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true, // Often required to trigger the tab selection UI
+        audio: true, // The essential part
+      });
+
+      // Check if the user actually shared audio.
+      if (stream.getAudioTracks().length === 0) {
+        const errorMsg = "Audio not shared. You must check 'Share tab audio' to capture sound.";
+        logger.warn(errorMsg);
+        setError(errorMsg);
+        stream.getTracks().forEach(track => track.stop()); // Clean up video track
+        return;
+      }
+
+      logger.info("Tab audio stream captured successfully.");
+      tabAudioStreamRef.current = stream;
+
+      // When the user clicks the browser's "Stop sharing" button, clean up.
+      stream.getTracks().forEach(track => {
+        track.onended = stopTabAudioCapture;
+      });
+      
+      // Play the stream to a muted audio element to keep it active.
+      if (audioElRef.current) {
+        audioElRef.current.srcObject = stream;
+      }
+
+      setIsCapturingTabAudio(true);
+      setStatus("Tab audio captured. Select the correct virtual input device to begin transcription.");
+
+    } catch (err) {
+        if ((err as Error).name === 'NotAllowedError') {
+            logger.warn("User denied screen share permission for tab audio capture.");
+        } else {
+            logger.error("Error capturing tab audio:", err);
+            setError("Failed to capture tab audio. See console for details.");
+        }
+    }
+  }, [isCapturingTabAudio, stopTabAudioCapture]);
+  
   
   const settingsPanelProps: SettingsPanelProps = {
-      // FIX: Removed apiKey and setApiKey from props.
       systemPrompt,
       setSystemPrompt,
       privateData,
       setPrivateData,
       isListening,
-      onToggleMetrics: () => {
-          setShowSettings(false);
-          setShowMetrics(true);
-      },
+      isAutoScrollEnabled,
+      setIsAutoScrollEnabled,
+      isTextInputEnabled,
+      setIsTextInputEnabled,
+      attachedFiles,
+      onFileAttach: handleFileAttach,
+      onFileRemove: handleFileRemove,
+      metrics,
+      audioDevices,
+      selectedDeviceId,
+      setSelectedDeviceId,
+      onLoadAudioDevices: handleLoadAudioDevices,
+      isCapturingTabAudio,
+      onToggleTabAudioCapture: handleToggleTabAudioCapture,
   };
 
-  // FIX: Removed isApiKeyMissing variable.
-
-  // --- Render Method ---
   return (
     <div className="relative h-screen flex flex-col p-2 sm:p-4 font-sans bg-gray-900 text-gray-100">
+        {/* Hidden audio element for playing back captured tab audio stream */}
+        <audio ref={audioElRef} muted playsInline autoPlay className="hidden" />
+
         {/* Header Toggle Button for mobile view - positioned absolutely */}
         <div className="sm:hidden absolute top-2 right-2 z-20">
             <button 
@@ -428,22 +787,26 @@ const App: React.FC = () => {
         </header>
 
         {/* The main layout for the application panels. */}
-        <main className="relative flex-1 flex flex-col gap-4 max-w-7xl mx-auto w-full min-h-0">
+        <main className="relative flex-1 flex flex-col gap-0 max-w-7xl mx-auto w-full min-h-0">
             <ConversationView 
                 messages={messages}
                 interimTranscript={interimTranscript}
                 isListening={isListening}
+                isAutoScrollEnabled={isAutoScrollEnabled}
             />
             <FloatingControls 
                 isListening={isListening}
                 onToggleListening={handleToggleListening}
                 error={error}
                 status={status}
+                isTextInputEnabled={isTextInputEnabled}
+                textInputValue={textInputValue}
+                setTextInputValue={setTextInputValue}
+                onSendMessage={handleSendMessage}
             />
         </main>
         
         {showSettings && <SettingsModal {...settingsPanelProps} onClose={() => setShowSettings(false)} />}
-        {showMetrics && <MetricsPanel metrics={metrics} onClose={() => setShowMetrics(false)} />}
     </div>
   );
 };
