@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import logger from '../utils/logger';
 import type { FileAttachment } from '../types';
@@ -312,12 +313,15 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </button>
                 {isCapturingTabAudio && (
                      <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
-                        <p className="font-bold text-cyan-400">Action Required: Select Audio Source</p>
+                        <p className="font-bold text-cyan-400">Now Transcribing Tab Audio</p>
                         <p className="text-gray-400">
-                            Tab audio is captured. To transcribe it, select your system's loopback device (e.g., "Stereo Mix" or a virtual audio device like BlackHole) from the <strong>Microphone</strong> dropdown above.
+                            Transcription has started automatically using your currently selected microphone. This may pick up audio from your speakers.
+                        </p>
+                         <p className="text-gray-400">
+                            <strong>For best results</strong>, select a system loopback device (e.g., "Stereo Mix" or a virtual audio device) from the <strong>Microphone</strong> dropdown above to capture audio directly.
                         </p>
                         <a href="https://github.com/existential-audio/BlackHole" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">
-                            Learn more about virtual audio devices.
+                            Learn how to set up a virtual audio device.
                         </a>
                     </div>
                 )}

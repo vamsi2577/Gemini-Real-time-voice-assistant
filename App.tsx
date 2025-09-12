@@ -702,7 +702,13 @@ const App: React.FC = () => {
       }
 
       setIsCapturingTabAudio(true);
-      setStatus("Tab audio captured. Select the correct virtual input device to begin transcription.");
+      setStatus("Tab audio captured. Starting transcription...");
+
+      // Automatically start listening. If the user already has their mic on, we don't interrupt.
+      if (!isListening) {
+        // Use a short delay to allow React to render state updates before starting recognition.
+        setTimeout(() => handleToggleListening(), 100);
+      }
 
     } catch (err) {
         if ((err as Error).name === 'NotAllowedError') {
@@ -712,7 +718,7 @@ const App: React.FC = () => {
             setError("Failed to capture tab audio. See console for details.");
         }
     }
-  }, [isCapturingTabAudio, stopTabAudioCapture]);
+  }, [isCapturingTabAudio, stopTabAudioCapture, isListening, handleToggleListening]);
   
   
   const settingsPanelProps: SettingsPanelProps = {
