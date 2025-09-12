@@ -101,6 +101,19 @@ sequenceDiagram
 -   **Security**: This API is highly secure and requires explicit, transient user permission for each use. A web application cannot directly process the captured audio stream for transcription with the `Web Speech API`.
 -   **Implementation**: The app initiates the capture and then guides the user to manually route the audio using a system-level tool (like a virtual audio device) which can then be selected from the app's microphone list. This respects the browser's security model while enabling the desired functionality.
 
+## Logging & Debugging
+
+The application is instrumented with a custom logger (`utils/logger.ts`) that outputs detailed information to the browser's developer console. This is the primary tool for debugging and understanding the application's behavior.
+
+-   **How to Use**: Open your browser's Developer Tools (usually by pressing F12 or Ctrl+Shift+I) and select the "Console" tab.
+-   **Log Levels**:
+    -   `[INFO]`: General application events, such as starting a new session, initializing the microphone, or attaching a file.
+    -   `[WARN]`: Non-critical issues that might indicate a problem, like an unsupported file type or an API stopping unexpectedly.
+    -   `[ERROR]`: Critical failures, such as failing to connect to the Gemini API or a browser feature being unsupported.
+    -   `[PERF]`: Performance metrics, such as the "time to first chunk" and total response time for AI responses.
+
+By monitoring the console, you can trace the entire lifecycle of a user interaction, from a microphone click to the final rendered response from the AI.
+
 ## In-App Configuration
 
 The settings panel provides inputs for real-time configuration of the AI's behavior:
@@ -113,7 +126,11 @@ The settings panel provides inputs for real-time configuration of the AI's behav
 
 ## Version History
 
--   **v2.5.0** (Current)
+-   **v2.6.0** (Current)
+    -   Enhanced logging across all major components for improved debugging.
+    -   Added extensive code comments to clarify complex logic (e.g., speech recognition, file parsing, state management).
+    -   Updated all documentation to reflect the new logging strategy and ensure accuracy.
+-   **v2.5.0**
     -   Added "Capture Tab Audio" feature. The app can now capture audio from other tabs and guides the user on how to route this audio for transcription using a virtual input device.
 -   **v2.4.0**
     -   Comprehensive update of all documentation, comments, and logs to reflect the latest features.

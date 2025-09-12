@@ -89,14 +89,18 @@ const FloatingControls: React.FC<FloatingControlsProps> = ({
    */
   const handleInput = (e: React.FormEvent<HTMLTextAreaElement>) => {
     const target = e.currentTarget;
-    // Reset height to 'auto' to get the correct scrollHeight for the new content.
+    // The trick to make the textarea grow is to first reset its height to 'auto'.
+    // This allows the browser to calculate the `scrollHeight` based on the new content.
     target.style.height = 'auto';
-    // Set the height to the scrollHeight to fit the content.
-    // The CSS 'max-height' property will prevent it from growing indefinitely.
+    // Then, we set the height to the calculated scrollHeight.
+    // The CSS 'max-height' property will prevent it from growing indefinitely, adding a scrollbar instead.
     target.style.height = `${target.scrollHeight}px`;
   };
 
 
+  // --- Conditional Rendering ---
+  // If text input is disabled, show the classic floating microphone button.
+  // This provides a simpler, voice-first UI.
   if (!isTextInputEnabled) {
     // Renders the original floating microphone button for a voice-first experience.
     const getButtonClass = () => {
@@ -128,7 +132,8 @@ const FloatingControls: React.FC<FloatingControlsProps> = ({
     );
   }
 
-  // Renders a full text input bar when text input is enabled.
+  // --- Full Input Bar ---
+  // If text input is enabled, render a comprehensive input bar at the bottom of the screen.
   const micButtonClass = isListening
     ? 'bg-red-600 hover:bg-red-700 text-white'
     : 'bg-gray-600 hover:bg-gray-500 text-gray-200';

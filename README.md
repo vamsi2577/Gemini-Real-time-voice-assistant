@@ -31,6 +31,10 @@ This is a static web application built with React and TypeScript that needs to b
 2.  Serve the project files from a local web server (e.g., using Vite, Create React App, or a custom Node/Express server).
 3.  Open the local server's address in your browser.
 
+## Development & Debugging
+
+The application is instrumented with a detailed logger. To see a real-time log of events, state changes, API calls, and performance metrics, open your browser's **Developer Tools** and view the **Console**. This is the best way to understand the application's internal state and debug any issues.
+
 ## Project Structure
 
 ```

@@ -84,6 +84,7 @@ const SettingsSection: React.FC<{ title: string; children: React.ReactNode }> = 
 
 /**
  * A modern, interactive component for displaying and editing a text value.
+ * It shows static text by default and transforms into a textarea when clicked.
  */
 const EditableSection: React.FC<{
   value: string;
@@ -92,19 +93,35 @@ const EditableSection: React.FC<{
   placeholder: string;
   rows?: number;
 }> = ({ value, onSave, isListening, placeholder, rows = 3 }) => {
+  // `isEditing` controls whether the textarea or the static text is displayed.
   const [isEditing, setIsEditing] = useState(false);
+  // `tempValue` holds the text being edited, separate from the main app state (`value`).
+  // This allows the user to cancel their changes without affecting the application's state.
   const [tempValue, setTempValue] = useState(value);
 
+  // This effect ensures that if the parent component's `value` prop changes
+  // (e.g., loaded from somewhere else), the `tempValue` is updated accordingly,
+  // but only when not in editing mode.
   useEffect(() => {
-    if (!isEditing) setTempValue(value);
+    if (!isEditing) {
+      setTempValue(value);
+    }
   }, [value, isEditing]);
 
   const handleSave = () => {
     onSave(tempValue);
     setIsEditing(false);
   };
-  const handleCancel = () => setIsEditing(false);
-  const handleEdit = () => !isListening && setIsEditing(true);
+  const handleCancel = () => {
+    setIsEditing(false);
+    // No need to reset tempValue here, the useEffect will handle it.
+  };
+  const handleEdit = () => {
+    // Prevent editing while the microphone is active to avoid conflicts.
+    if (!isListening) {
+      setIsEditing(true);
+    }
+  };
 
   if (isEditing) {
     return (
@@ -199,6 +216,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // When the settings panel is opened, load the list of audio devices.
   useEffect(() => {
+    // This is called only when the panel mounts, preventing repeated device enumeration.
     onLoadAudioDevices();
   }, [onLoadAudioDevices]);
 
@@ -313,9 +331,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </button>
                 {isCapturingTabAudio && (
                      <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
-                        <p className="font-bold text-cyan-400">Now Transcribing Tab Audio</p>
+                        <p className="font-bold text-cyan-400">Tab Audio Capture is Active</p>
                         <p className="text-gray-400">
-                            Transcription has started automatically using your currently selected microphone. This may pick up audio from your speakers.
+                           The application is ready to capture audio from the shared tab. To start transcribing, press the microphone button.
                         </p>
                          <p className="text-gray-400">
                             <strong>For best results</strong>, select a system loopback device (e.g., "Stereo Mix" or a virtual audio device) from the <strong>Microphone</strong> dropdown above to capture audio directly.

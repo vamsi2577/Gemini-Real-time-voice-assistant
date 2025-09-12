@@ -144,9 +144,12 @@ const App: React.FC = () => {
   // Refs are used to hold instances or values that persist across re-renders without causing them.
   const chatRef = React.useRef<Chat | null>(null);
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
-  // This ref tracks if the user manually stopped the recognition, vs. it stopping on its own.
+  // This ref tracks if the user manually stopped recognition, vs. it stopping on its own (e.g., due to an error or timeout).
+  // It's critical for the auto-restart logic in the `onend` event handler.
   const userStoppedRef = React.useRef<boolean>(true);
+  // Holds the MediaStream object when capturing tab audio.
   const tabAudioStreamRef = React.useRef<MediaStream | null>(null);
+  // A ref to a hidden <audio> element, used to keep the captured tab audio stream active.
   const audioElRef = React.useRef<HTMLAudioElement>(null);
 
 
@@ -168,13 +171,14 @@ const App: React.FC = () => {
    * for the model, then creates the chat instance.
    */
   const initializeChat = React.useCallback(() => {
-      logger.info('Initializing chat session.');
+      logger.info('Initializing new chat session with context.');
       try {
         const fullSystemInstruction = systemPrompt;
 
         let history: Content[] = [];
 
         // If there's private data or attachments, construct an initial history turn.
+        // This "primes" the model with the context it needs before the user's first message.
         if (privateData.trim() || attachedFiles.length > 0) {
             const userParts: Part[] = [];
 
@@ -231,12 +235,14 @@ const App: React.FC = () => {
                 parts: userParts,
             });
 
-            // Add a priming model response.
+            // Add a priming model response to confirm receipt of the context.
             history.push({
                 role: 'model',
                 parts: [{ text: "Understood. I have received the information and will use it as context." }]
             });
         }
+        
+        logger.info('Chat history context constructed', { historyLength: history.length, systemInstruction: fullSystemInstruction });
         
         // FIX: createChatSession now accepts history.
         chatRef.current = createChatSession(fullSystemInstruction, history);
@@ -304,7 +310,8 @@ const App: React.FC = () => {
     const userMessage: Message = { id: Date.now().toString(), role: 'user', text };
     setMessages(prev => [...prev, userMessage]);
     
-    // Create a placeholder for the model's response to enable streaming UI.
+    // Create a placeholder for the model's response. This allows the UI to render the
+    // message bubble immediately and stream the text content into it as it arrives.
     const modelMessageId = (Date.now() + 1).toString();
     const modelMessagePlaceholder: Message = { id: modelMessageId, role: 'model', text: '' };
     setMessages(prev => [...prev, modelMessagePlaceholder]);
@@ -385,6 +392,7 @@ const App: React.FC = () => {
     if (!files) return;
 
     setError(null);
+    // Use a promise-based approach to handle multiple file reads asynchronously.
     const fileReadPromises: Promise<FileAttachment>[] = [];
 
     // Supported MIME types for different categories
@@ -412,6 +420,7 @@ const App: React.FC = () => {
           reader.onload = e => {
             const result = e.target?.result as string;
             if (result) {
+              // Extract the base64 part of the data URL.
               resolve({ name: file.name, mimeType: file.type, size: file.size, data: result.split(',')[1] });
             } else {
               reject(new Error(`Failed to read image file ${file.name}`));
@@ -487,6 +496,7 @@ const App: React.FC = () => {
       }
     }
 
+    // Wait for all selected files to be processed before updating the state.
     Promise.all(fileReadPromises)
       .then(newFiles => {
         setAttachedFiles(prev => [...prev, ...newFiles]);
@@ -497,6 +507,7 @@ const App: React.FC = () => {
         setError("There was an error processing one or more attached files.");
       });
     
+    // Clear the file input so the user can select the same file again if they remove it.
     event.target.value = '';
   };
 
@@ -506,8 +517,9 @@ const App: React.FC = () => {
    * @param {number} index - The index of the file to remove.
    */
   const handleFileRemove = (index: number) => {
+    const removedFile = attachedFiles[index];
     setAttachedFiles(prev => prev.filter((_, i) => i !== index));
-    logger.info("File removed", { index });
+    logger.info(`File removed: ${removedFile.name}`, { index });
   };
 
 
@@ -515,7 +527,7 @@ const App: React.FC = () => {
    * Resets the application state to start a new conversation.
    */
   const handleNewSession = React.useCallback(() => {
-    logger.info("User initiated new session.");
+    logger.info("User initiated new session. Resetting state.");
     // Stop listening if it's currently active.
     if (isListening) {
       userStoppedRef.current = true;
@@ -548,6 +560,7 @@ const App: React.FC = () => {
       
       // Initialize chat if this is the very first interaction or settings have changed.
       if (!chatRef.current) {
+          logger.info("No active chat session found, initializing one before starting to listen.");
           initializeChat();
       }
 
@@ -562,29 +575,34 @@ const App: React.FC = () => {
         logger.info("Initializing SpeechRecognition for the first time.");
         const recognition: SpeechRecognition = new SpeechRecognitionImpl();
         recognition.continuous = true; // Keep listening even after a pause.
-        recognition.interimResults = true; // Get results as the user speaks.
+        recognition.interimResults = true; // Get results as the user speaks for real-time feedback.
         recognition.lang = 'en-US';
 
         // --- SpeechRecognition Event Handlers ---
+
+        // Called when the recognition service has started listening.
         recognition.onstart = () => {
           logger.info("SpeechRecognition service has started.");
           setIsListening(true);
           setStatus("Listening...");
         };
 
+        // Called when the recognition service has stopped.
         recognition.onend = () => {
           logger.info("SpeechRecognition service has ended.");
           setIsListening(false);
           setInterimTranscript('');
           setStatus('');
+          // Auto-restart logic: If the service stops on its own (e.g., network error, timeout),
+          // and the user hasn't manually stopped it, restart it to maintain a continuous listening experience.
           if (!userStoppedRef.current) {
-            // If it wasn't a manual stop, auto-restart to maintain continuous listening.
             logger.warn("SpeechRecognition stopped unexpectedly, restarting.");
             setStatus("Restarting listener...");
             recognitionRef.current?.start();
           }
         };
 
+        // Called when a speech recognition error occurs.
         recognition.onerror = (event) => {
           logger.error(`Speech recognition error: ${event.error}`);
           setError(`Speech recognition error: ${event.error}`);
@@ -594,6 +612,7 @@ const App: React.FC = () => {
           setStatus('');
         };
 
+        // The core event handler, called when the recognizer has a new result.
         recognition.onresult = (event) => {
           let finalTranscript = '';
           let interim = '';
@@ -628,12 +647,13 @@ const App: React.FC = () => {
   const handleLoadAudioDevices = React.useCallback(async () => {
     logger.info("Attempting to load audio devices.");
     if (audioDevices.length > 0) {
-      logger.info("Audio devices already loaded.");
+      logger.info("Audio devices already loaded, skipping.");
       return;
     }
 
     try {
-      // Request microphone permission. This is necessary to get device labels.
+      // Request microphone permission. This is necessary to get device labels, which would
+      // otherwise be blank for security reasons.
       await navigator.mediaDevices.getUserMedia({ audio: true });
       // Enumerate all media devices.
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -648,22 +668,25 @@ const App: React.FC = () => {
   }, [audioDevices]);
 
   /**
-    * Stops the tab audio capture stream.
+    * Stops the tab audio capture stream and cleans up resources.
     */
   const stopTabAudioCapture = React.useCallback(() => {
     if (tabAudioStreamRef.current) {
       logger.info("Stopping tab audio capture.");
+      // Stop all tracks in the stream (both audio and video).
       tabAudioStreamRef.current.getTracks().forEach(track => track.stop());
       tabAudioStreamRef.current = null;
+      // Detach the stream from the hidden audio element.
       if (audioElRef.current) {
         audioElRef.current.srcObject = null;
       }
       setIsCapturingTabAudio(false);
+      setStatus(""); // Clear any related status messages
     }
   }, []);
   
   /**
-    * Toggles the capture of audio from another browser tab.
+    * Toggles the capture of audio from another browser tab using the Screen Capture API.
     */
   const handleToggleTabAudioCapture = React.useCallback(async () => {
     if (isCapturingTabAudio) {
@@ -671,44 +694,43 @@ const App: React.FC = () => {
       return;
     }
 
-    logger.info("Requesting to capture tab audio.");
+    logger.info("Requesting to capture tab audio via getDisplayMedia.");
     setError(null);
     try {
+      // Use getDisplayMedia to prompt the user to share a screen or tab.
+      // Requesting video is often necessary to ensure the browser shows the tab selection UI.
+      // The crucial part is `audio: true`.
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true, // Often required to trigger the tab selection UI
-        audio: true, // The essential part
+        video: true,
+        audio: true,
       });
 
-      // Check if the user actually shared audio.
+      // Check if the user actually shared audio. They might have shared a screen without audio.
       if (stream.getAudioTracks().length === 0) {
         const errorMsg = "Audio not shared. You must check 'Share tab audio' to capture sound.";
         logger.warn(errorMsg);
         setError(errorMsg);
-        stream.getTracks().forEach(track => track.stop()); // Clean up video track
+        stream.getTracks().forEach(track => track.stop()); // Clean up the leftover video track.
         return;
       }
 
       logger.info("Tab audio stream captured successfully.");
       tabAudioStreamRef.current = stream;
 
-      // When the user clicks the browser's "Stop sharing" button, clean up.
+      // When the user clicks the browser's native "Stop sharing" button, clean up our state.
       stream.getTracks().forEach(track => {
         track.onended = stopTabAudioCapture;
       });
       
-      // Play the stream to a muted audio element to keep it active.
+      // A trick to keep the audio stream active: play it to a muted audio element.
+      // Without this, some browsers might pause or drop the stream.
       if (audioElRef.current) {
         audioElRef.current.srcObject = stream;
       }
 
       setIsCapturingTabAudio(true);
-      setStatus("Tab audio captured. Starting transcription...");
-
-      // Automatically start listening. If the user already has their mic on, we don't interrupt.
-      if (!isListening) {
-        // Use a short delay to allow React to render state updates before starting recognition.
-        setTimeout(() => handleToggleListening(), 100);
-      }
+      // Provide clear instructions instead of auto-starting, which can cause a "stuck" state.
+      setStatus("Tab audio captured. Press the mic button to start transcribing.");
 
     } catch (err) {
         if ((err as Error).name === 'NotAllowedError') {
@@ -718,7 +740,7 @@ const App: React.FC = () => {
             setError("Failed to capture tab audio. See console for details.");
         }
     }
-  }, [isCapturingTabAudio, stopTabAudioCapture, isListening, handleToggleListening]);
+  }, [isCapturingTabAudio, stopTabAudioCapture]);
   
   
   const settingsPanelProps: SettingsPanelProps = {
@@ -745,7 +767,7 @@ const App: React.FC = () => {
 
   return (
     <div className="relative h-screen flex flex-col p-2 sm:p-4 font-sans bg-gray-900 text-gray-100">
-        {/* Hidden audio element for playing back captured tab audio stream */}
+        {/* Hidden audio element for playing back captured tab audio stream to keep it active */}
         <audio ref={audioElRef} muted playsInline autoPlay className="hidden" />
 
         {/* Header Toggle Button for mobile view - positioned absolutely */}
