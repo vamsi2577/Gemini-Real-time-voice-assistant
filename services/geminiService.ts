@@ -5,26 +5,34 @@
 import { GoogleGenAI, Chat, type Content } from "@google/genai";
 import logger from '../utils/logger';
 
+// --- Runtime API Key Injection ---
+// This allows the Docker container to inject the API key at runtime.
+declare global {
+  interface Window {
+    __GEMINI_API_KEY__?: string;
+  }
+}
+
 /**
  * Creates and inits a new chat session with the Gemini model.
  * @param {string} systemInstruction - The system prompt to guide the model's behavior.
  * @param {Content[]} [history] - Optional. A pre-existing conversation history to provide context.
  * @returns {Chat} A new Chat instance.
- * @throws {Error} If the API key is missing from environment variables.
+ * @throws {Error} If the API key is missing.
  */
-// FIX: Removed apiKey parameter. The API key must be sourced from process.env.API_KEY.
 export function createChatSession(systemInstruction: string, history?: Content[]): Chat {
-    // FIX: Check for process.env.API_KEY instead of a parameter.
-    if (!process.env.API_KEY) {
-        const errorMessage = "API key is missing. Make sure API_KEY environment variable is set.";
+    // MODIFIED: Fetch the API key from the window object, injected by the container.
+    const apiKey = window.__GEMINI_API_KEY__;
+
+    if (!apiKey) {
+        const errorMessage = "API key is missing. It must be provided via the API_KEY environment variable to the container.";
         logger.error(errorMessage);
         throw new Error(errorMessage);
     }
     
     logger.info('Creating new Gemini chat session.');
     
-    // FIX: Initialize GoogleGenAI with the API key from environment variables.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: apiKey });
 
     return ai.chats.create({
         model: 'gemini-2.5-flash',
