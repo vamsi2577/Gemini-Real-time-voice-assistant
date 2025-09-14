@@ -1,4 +1,5 @@
 
+
 /**
  * @fileoverview The main application component for the Gemini Real-time Voice Assistant.
  * It manages state, handles speech recognition and text input, orchestrates communication
@@ -150,6 +151,9 @@ const App: React.FC = () => {
   const chatRef = React.useRef<Chat | null>(null);
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  // This ref stores the actual MIME type being used by the MediaRecorder, which is crucial
+  // for sending the correct format to the transcription API.
+  const mediaRecorderMimeTypeRef = React.useRef<string>('');
   // This ref tracks if the user manually stopped recognition, vs. it stopping on its own (e.g., due to an error or timeout).
   // It's critical for the auto-restart logic in the `onend` event handler.
   const userStoppedRef = React.useRef<boolean>(true);
@@ -564,11 +568,55 @@ const App: React.FC = () => {
         return;
     }
     
+    // --- Enhanced Debugging ---
+    logger.info("Preparing to start MediaRecorder.", {
+        streamId: tabAudioStreamRef.current.id,
+        streamActive: tabAudioStreamRef.current.active,
+        audioTracks: tabAudioStreamRef.current.getAudioTracks().length,
+        videoTracks: tabAudioStreamRef.current.getVideoTracks().length,
+    });
+    if (tabAudioStreamRef.current.getAudioTracks().length === 0) {
+        logger.error("Media stream has no audio tracks. Cannot record.");
+        setError("The captured tab did not provide an audio track.");
+        return;
+    }
+    // --- End Enhanced Debugging ---
+    
     try {
-        logger.info("Starting MediaRecorder for continuous tab audio transcription.");
-        const options = { mimeType: 'audio/webm; codecs=opus' };
+        // --- Robust MIME Type Selection ---
+        const mimeTypesToTry = [
+            'audio/webm; codecs=opus', // Preferred, high quality and efficiency
+            'audio/webm',              // General fallback
+            'audio/ogg; codecs=opus',  // Alternative for some browsers
+            // Let the browser decide if none of the above are supported
+        ];
+
+        let selectedMimeType = '';
+        for (const mimeType of mimeTypesToTry) {
+            if (MediaRecorder.isTypeSupported(mimeType)) {
+                selectedMimeType = mimeType;
+                break;
+            }
+        }
+        
+        if (selectedMimeType) {
+            logger.info(`Using supported MIME type: ${selectedMimeType}`);
+        } else {
+            logger.warn("No preferred MIME type is supported. Letting the browser choose a default.");
+        }
+
+        const options = selectedMimeType ? { mimeType: selectedMimeType } : {};
+        logger.info("Initializing MediaRecorder with options:", options);
+        // --- End Robust MIME Type Selection ---
+        
         const recorder = new MediaRecorder(tabAudioStreamRef.current, options);
         mediaRecorderRef.current = recorder;
+
+        // The `mimeType` property of the recorder instance gives us the *actual* type
+        // being used, which is crucial if the browser selected a default.
+        mediaRecorderMimeTypeRef.current = recorder.mimeType;
+        logger.info(`MediaRecorder initialized with actual MIME type: ${recorder.mimeType}`);
+
 
         /**
          * Processes a single chunk of audio: transcribes it and sends it to the chat.
@@ -577,8 +625,12 @@ const App: React.FC = () => {
          */
         const processAudioChunk = async (audioBlob: Blob) => {
           try {
+            // Use the actual mimeType that the recorder is using.
+            const mimeType = mediaRecorderMimeTypeRef.current;
             setStatus("Processing audio chunk...");
-            const base64Audio = await transcribeAudio(await blobToBase64(audioBlob), 'audio/webm');
+            logger.info("Processing audio chunk.", { size: audioBlob.size, type: mimeType });
+
+            const base64Audio = await transcribeAudio(await blobToBase64(audioBlob), mimeType);
             if (base64Audio && base64Audio.trim()) {
               logger.info("Continuous transcription successful, sending to chat.", { transcript: base64Audio });
               sendToGemini(base64Audio.trim());
@@ -614,9 +666,11 @@ const App: React.FC = () => {
         recorder.start(5000); 
         setIsListening(true);
         setStatus("Transcribing from tab...");
+        logger.info("MediaRecorder started successfully.");
+
     } catch (e) {
         logger.error("Failed to start MediaRecorder:", e);
-        setError("Could not start audio recorder. Is the MIME type supported?");
+        setError("Could not start audio recorder. Check browser support and permissions.");
         setIsListening(false);
     }
   }, [sendToGemini]);
