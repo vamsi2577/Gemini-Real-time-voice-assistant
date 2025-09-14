@@ -6,30 +6,61 @@ For a full breakdown of features, architecture, and API usage, please see the [*
 
 ---
 
+## Features Overview
+
+-   **Dual Input Modes**: Seamlessly switch between voice (real-time transcription) and text input.
+-   **Contextual Understanding**: Attach images, PDFs, DOCX, and TXT files, or add private text data for context-aware conversations.
+-   **Transcribe Browser Tab Audio**: Directly capture and transcribe audio from another browser tab using the Gemini API, perfect for meetings, videos, or live streams. A legacy mode for virtual audio devices is also available.
+-   **Customizable & Responsive UI**: Modern, responsive interface with a detailed settings panel to customize the AI's persona, select microphones, and monitor session metrics.
+-   **Performance & Cost Tracking**: Integrated metrics to track token usage, response times, and estimate session costs.
+
+---
+
 ## Prerequisites
 
 -   A modern web browser that supports the [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API) and the [Screen Capture API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Capture_API) (e.g., Chrome, Edge).
 -   A working microphone.
--   Node.js and a package manager (like npm or yarn) to run a development server.
+-   [Docker](https://www.docker.com/get-started) installed on your system.
+-   A Google Gemini API key.
 
 ## Configuration
 
 The application requires a Google Gemini API key to function.
 
 1.  **Get an API Key**: Obtain your key from [Google AI Studio](https://aistudio.google.com/app/apikey).
-2.  **Set Environment Variable**: The API key **must** be provided as an environment variable named `API_KEY`. How you set this depends on your development server. For example, you might create a `.env` file in the project root:
+2.  **Set Environment Variable**: The API key **must** be provided as an environment variable named `API_KEY` when running the Docker container.
+
+## How to Run with Docker
+
+This application is designed to be run in a Docker container, which simplifies setup and ensures a consistent environment.
+
+1.  **Build the Docker image:**
+    Open a terminal in the project's root directory and run:
+    ```sh
+    docker build -t gemini-voice-assistant .
     ```
-    API_KEY=your_gemini_api_key_here
+
+2.  **Run the Docker container:**
+    Replace `your_gemini_api_key_here` with your actual Gemini API key.
+    ```sh
+    docker run -p 8080:80 -e API_KEY=your_gemini_api_key_here --name gemini-assistant gemini-voice-assistant
     ```
-    Your server must be configured to load this variable and make it accessible as `process.env.API_KEY` in the client-side code. **The application will not function without it.**
+    -   `-p 8080:80`: Maps port 8080 on your local machine to port 80 inside the container.
+    -   `-e API_KEY=...`: Securely passes your API key into the container as an environment variable.
+    -   `--name gemini-assistant`: Assigns a convenient name to your running container.
 
-## How to Run
+3.  **Access the application:**
+    Open your web browser and navigate to `http://localhost:8080`.
 
-This is a static web application built with React and TypeScript that needs to be served by a development server capable of handling environment variables.
+4.  **To stop the container:**
+    ```sh
+    docker stop gemini-assistant
+    ```
 
-1.  Set your `API_KEY` environment variable as described above.
-2.  Serve the project files from a local web server (e.g., using Vite, Create React App, or a custom Node/Express server).
-3.  Open the local server's address in your browser.
+5.  **To remove the container:**
+    ```sh
+    docker rm gemini-assistant
+    ```
 
 ## Development & Debugging
 
@@ -39,6 +70,9 @@ The application is instrumented with a detailed logger. To see a real-time log o
 
 ```
 /
+├── Dockerfile                # Instructions to build the Docker image
+├── nginx.conf                # Nginx configuration for serving the app
+├── entrypoint.sh             # Script to inject API key at runtime
 ├── index.html                # Main HTML entry point
 ├── index.tsx                 # React application root
 ├── App.tsx                   # Main application component

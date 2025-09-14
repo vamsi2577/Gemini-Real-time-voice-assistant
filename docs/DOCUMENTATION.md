@@ -10,10 +10,11 @@ A multimodal, real-time AI assistant that listens to your voice or accepts text 
 -   **File Attachments for Context**: Provide files directly to the assistant for context. Supported formats include:
     -   **Images**: (JPG, PNG, WebP) for visual analysis.
     -   **Documents**: (PDF, DOCX) and plain text (.TXT). The app securely parses these on the client-side to extract text content.
--   **Capture Browser Tab Audio**: Listen to and transcribe audio from another browser tab (e.g., a meeting or a video). Due to browser security, this feature guides you to use a system-level audio loopback device (like "Stereo Mix" on Windows or a virtual audio device on macOS) to route the captured audio for transcription.
+-   **Transcribe Browser Tab Audio**: A powerful feature for transcribing audio from another browser tab (e.g., a meeting, webinar, or video).
+    -   **Gemini API Method (Default)**: The app directly captures the tab's audio stream, records it in chunks, and sends it to the Gemini API for highly accurate, real-time transcription. This requires no external software.
+    -   **Virtual Device Method (Legacy)**: For advanced users or specific use cases, the app retains the ability to listen to a virtual audio device (like VB-Cable or BlackHole) that you configure manually.
 -   **Modern, Interactive Settings Panel**: A redesigned UI for configuration, organized into clean, card-based sections.
     -   **Click-to-Edit Prompts**: System prompts are displayed as clean text and transform into an editable area on-demand, saving space.
-    -   **Hover-to-Reveal**: Long prompts are collapsed by default and expand on hover for a cleaner look.
     -   **Microphone Selection**: Choose your preferred audio input device from a dropdown list of available microphones.
 -   **Integrated Session Metrics**: The performance and cost metrics are now integrated as a collapsible section within the settings panel, removing the need for a separate modal.
 -   **Real-time Voice Transcription**: Uses the browser's native Web Speech API to transcribe your voice into text as you speak.
@@ -29,12 +30,13 @@ The application is a client-side single-page application (SPA).
 -   **Frontend Framework**: **React 19** with TypeScript.
 -   **Styling**: **Tailwind CSS** for a utility-first styling workflow.
 -   **AI Integration**: **Google Gemini API** via the `@google/genai` SDK.
-    -   **Model**: `gemini-2.5-flash` is used for its excellent balance of speed and capability.
+    -   **Model**: `gemini-2.5-flash` is used for both chat and audio transcription.
 -   **Voice Recognition**: **Web Speech API**, a browser-native API for speech-to-text.
--   **Tab Audio Capture**: **Screen Capture API** (`getDisplayMedia`) to capture audio streams from other browser tabs.
+-   **Tab Audio Capture**: **Screen Capture API** (`getDisplayMedia`) to capture audio streams from other browser tabs, combined with the **MediaRecorder API** to record the stream for transcription.
 -   **Document Parsing**:
     -   **PDF.js**: For client-side parsing of PDF files.
     -   **Mammoth.js**: For client-side extraction of text from DOCX files.
+-   **Containerization**: **Docker** with **Nginx** for serving the static files and injecting the API key at runtime.
 
 ## Application Flow
 
@@ -43,14 +45,24 @@ sequenceDiagram
     participant User
     participant Browser UI (React)
     participant Web Speech API
+    participant MediaRecorder API
     participant Gemini Service
     participant Google Gemini API
 
-    alt Voice Input
+    alt Voice Input (Microphone)
         User->>Browser UI (React): Clicks Microphone Button
         Browser UI (React)->>Web Speech API: start()
         Web Speech API-->>Browser UI (React): onresult (final transcript)
         Browser UI (React)->>Gemini Service: sendToGemini(finalTranscript)
+    else Voice Input (Tab Audio)
+        User->>Browser UI (React): Starts Tab Capture
+        Browser UI (React)->>MediaRecorder API: start()
+        MediaRecorder API-->>Browser UI (React): ondataavailable (audio chunk)
+        Browser UI (React)->>Gemini Service: transcribeAudio(audio chunk)
+        Gemini Service->>Google Gemini API: generateContent(audio)
+        Google Gemini API-->>Gemini Service: transcript
+        Gemini Service-->>Browser UI (React): Returns transcript
+        Browser UI (React)->>Gemini Service: sendToGemini(transcript)
     else Text Input
         User->>Browser UI (React): Types message and clicks Send
         Browser UI (React)->>Gemini Service: sendToGemini(textMessage)
@@ -78,7 +90,7 @@ sequenceDiagram
 
 ### 1. Google Gemini API (`@google/genai`)
 
--   **Description**: The core AI service that provides conversational intelligence.
+-   **Description**: The core AI service that provides conversational intelligence and audio transcription.
 -   **Model Used**: `gemini-2.5-flash`
 -   **Key Methods**:
     -   `ai.chats.create()`: Initializes a new chat session. It's configured with:
@@ -86,20 +98,25 @@ sequenceDiagram
         -   `history`: To provide initial context from "Personalization Data" and attached files.
         -   `thinkingConfig: { thinkingBudget: 0 }`: An optimization to disable the model's "thinking" phase, significantly reducing latency for a real-time feel.
     -   `chat.sendMessageStream()`: Sends the user's text and returns a stream of response chunks.
+    -   `ai.models.generateContent()`: Used for the audio transcription feature, sending an audio blob to the model with a specific prompt to get text back.
 
 ### 2. Web Speech API
 
--   **Description**: A browser-integrated API for voice recognition.
+-   **Description**: A browser-integrated API for voice recognition from a microphone.
 -   **Interface**: `window.SpeechRecognition` or `window.webkitSpeechRecognition`.
 -   **Key Configuration**:
     -   `continuous = true`: The API continues to listen even after the user pauses.
     -   `interimResults = true`: The API provides real-time, non-final transcripts as the user speaks for immediate feedback.
--   **Microphone Control**: The app allows users to select a preferred audio input device, although the browser ultimately controls which device is used.
 
-### 3. Screen Capture API (`getDisplayMedia`)
--   **Description**: Used to capture the contents of a display or part thereof. This app uses it specifically to capture the audio output of another browser tab.
--   **Security**: This API is highly secure and requires explicit, transient user permission for each use. A web application cannot directly process the captured audio stream for transcription with the `Web Speech API`.
--   **Implementation**: The app initiates the capture and then guides the user to manually route the audio using a system-level tool (like a virtual audio device) which can then be selected from the app's microphone list. This respects the browser's security model while enabling the desired functionality.
+### 3. Screen Capture API (`getDisplayMedia`) & MediaRecorder API
+-   **Description**: A combination of APIs used to implement the direct tab audio transcription feature.
+-   **Security**: `getDisplayMedia` is highly secure and requires explicit user permission for each use. The user must choose to share a tab and enable "Share tab audio."
+-   **Implementation**:
+    1.  The app calls `getDisplayMedia({ audio: true })` to get a `MediaStream` from a user-selected tab.
+    2.  This stream is then passed to a `MediaRecorder` instance.
+    3.  The `MediaRecorder` captures the audio in chunks (e.g., every 5 seconds).
+    4.  Each audio chunk is base64-encoded and sent to the Gemini API's `generateContent` endpoint for transcription.
+    5.  The resulting text is fed into the chat, creating a continuous, near-real-time transcription.
 
 ## Logging & Debugging
 
@@ -126,10 +143,11 @@ The settings panel provides inputs for real-time configuration of the AI's behav
 
 ## Version History
 
--   **v2.6.0** (Current)
+-   **v2.7.0** (Current)
+    -   Updated all documentation to reflect the new tab audio transcription feature and Docker-based deployment.
+-   **v2.6.0**
     -   Enhanced logging across all major components for improved debugging.
     -   Added extensive code comments to clarify complex logic (e.g., speech recognition, file parsing, state management).
-    -   Updated all documentation to reflect the new logging strategy and ensure accuracy.
 -   **v2.5.0**
     -   Added "Capture Tab Audio" feature. The app can now capture audio from other tabs and guides the user on how to route this audio for transcription using a virtual input device.
 -   **v2.4.0**
