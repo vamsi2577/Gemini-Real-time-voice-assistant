@@ -558,29 +558,79 @@ const App: React.FC = () => {
     });
   };
 
+   /**
+    * Stops the tab audio capture stream and cleans up resources.
+    */
+  const stopTabAudioCapture = React.useCallback(() => {
+    logger.info("Executing stopTabAudioCapture.");
+    // If we are actively recording from the tab, stop the recorder.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+    }
+
+    if (tabAudioStreamRef.current) {
+      logger.info("Stopping tab audio capture stream.");
+      // Stop all tracks in the stream (both audio and video).
+      tabAudioStreamRef.current.getTracks().forEach(track => track.stop());
+      tabAudioStreamRef.current = null;
+      // Detach the stream from the hidden audio element.
+      if (audioElRef.current) {
+        audioElRef.current.srcObject = null;
+      }
+      setIsCapturingTabAudio(false);
+      // Also ensure the listening state, which is used for transcription, is turned off.
+      if (isListening) {
+        setIsListening(false);
+      }
+      setStatus(""); // Clear any related status messages
+    }
+  }, [isListening]);
+
   /**
    * Starts continuously recording the captured tab audio stream for transcription.
    */
   const startTabAudioTranscription = React.useCallback(() => {
-    if (!tabAudioStreamRef.current) {
+    const stream = tabAudioStreamRef.current;
+    if (!stream) {
         logger.error("Cannot start tab transcription: no audio stream.");
         setError("Audio stream not available. Try capturing the tab again.");
         return;
     }
     
-    // --- Enhanced Debugging ---
+    // --- Pre-flight Checks and Enhanced Debugging ---
+    const audioTracks = stream.getAudioTracks();
     logger.info("Preparing to start MediaRecorder.", {
-        streamId: tabAudioStreamRef.current.id,
-        streamActive: tabAudioStreamRef.current.active,
-        audioTracks: tabAudioStreamRef.current.getAudioTracks().length,
-        videoTracks: tabAudioStreamRef.current.getVideoTracks().length,
+        streamId: stream.id,
+        streamActive: stream.active,
+        audioTracksCount: audioTracks.length,
     });
-    if (tabAudioStreamRef.current.getAudioTracks().length === 0) {
+
+    if (audioTracks.length === 0) {
         logger.error("Media stream has no audio tracks. Cannot record.");
         setError("The captured tab did not provide an audio track.");
         return;
     }
-    // --- End Enhanced Debugging ---
+
+    // Log details about each audio track to diagnose stream state issues.
+    audioTracks.forEach((track, index) => {
+        logger.info(`Audio track ${index} details:`, {
+            id: track.id,
+            kind: track.kind,
+            label: track.label,
+            enabled: track.enabled,
+            readyState: track.readyState, // Should be 'live'
+        });
+    });
+    
+    // Crucial check: if the track is not 'live', the recorder will fail.
+    // This can happen if the user closes the shared tab or waits too long.
+    if (audioTracks.some(track => track.readyState !== 'live')) {
+        logger.error("One or more audio tracks are not live. Cannot record.", { readyStates: audioTracks.map(t => t.readyState) });
+        setError("The audio source has ended. Please capture the tab again.");
+        stopTabAudioCapture(); // Clean up the dead stream.
+        return;
+    }
+    // --- End Pre-flight Checks ---
     
     try {
         // --- Robust MIME Type Selection ---
@@ -588,7 +638,6 @@ const App: React.FC = () => {
             'audio/webm; codecs=opus', // Preferred, high quality and efficiency
             'audio/webm',              // General fallback
             'audio/ogg; codecs=opus',  // Alternative for some browsers
-            // Let the browser decide if none of the above are supported
         ];
 
         let selectedMimeType = '';
@@ -609,7 +658,7 @@ const App: React.FC = () => {
         logger.info("Initializing MediaRecorder with options:", options);
         // --- End Robust MIME Type Selection ---
         
-        const recorder = new MediaRecorder(tabAudioStreamRef.current, options);
+        const recorder = new MediaRecorder(stream, options);
         mediaRecorderRef.current = recorder;
 
         // The `mimeType` property of the recorder instance gives us the *actual* type
@@ -666,14 +715,14 @@ const App: React.FC = () => {
         recorder.start(5000); 
         setIsListening(true);
         setStatus("Transcribing from tab...");
-        logger.info("MediaRecorder started successfully.");
+        logger.info("MediaRecorder started successfully for continuous tab audio transcription.");
 
     } catch (e) {
         logger.error("Failed to start MediaRecorder:", e);
         setError("Could not start audio recorder. Check browser support and permissions.");
         setIsListening(false);
     }
-  }, [sendToGemini]);
+  }, [sendToGemini, stopTabAudioCapture]);
 
   /**
    * Stops the continuous tab audio recording.
@@ -847,32 +896,6 @@ const App: React.FC = () => {
     }
   }, [audioDevices]);
 
-  /**
-    * Stops the tab audio capture stream and cleans up resources.
-    */
-  const stopTabAudioCapture = React.useCallback(() => {
-    // If we are actively recording from the tab, stop the recorder.
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        mediaRecorderRef.current.stop();
-    }
-
-    if (tabAudioStreamRef.current) {
-      logger.info("Stopping tab audio capture.");
-      // Stop all tracks in the stream (both audio and video).
-      tabAudioStreamRef.current.getTracks().forEach(track => track.stop());
-      tabAudioStreamRef.current = null;
-      // Detach the stream from the hidden audio element.
-      if (audioElRef.current) {
-        audioElRef.current.srcObject = null;
-      }
-      setIsCapturingTabAudio(false);
-      // Also ensure the listening state, which is used for transcription, is turned off.
-      if (isListening) {
-        setIsListening(false);
-      }
-      setStatus(""); // Clear any related status messages
-    }
-  }, [isListening]);
   
   /**
     * Toggles the capture of audio from another browser tab using the Screen Capture API.
