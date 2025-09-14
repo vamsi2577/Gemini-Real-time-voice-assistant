@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import logger from '../utils/logger';
 import type { FileAttachment } from '../types';
@@ -30,6 +29,8 @@ export interface SettingsPanelProps {
   onLoadAudioDevices: () => void;
   isCapturingTabAudio: boolean;
   onToggleTabAudioCapture: () => void;
+  useApiForTranscription: boolean;
+  setUseApiForTranscription: (enabled: boolean) => void;
 }
 
 // --- Helper Icons (defined locally) ---
@@ -65,6 +66,24 @@ const SpeakerWaveIcon: React.FC<{ className?: string }> = ({ className }) => (
         <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
         <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
     </svg>
+);
+
+const MicIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+    <line x1="12" y1="19" x2="12" y2="23"></line>
+    <line x1="8" y1="23" x2="16" y2="23"></line>
+  </svg>
 );
 
 
@@ -208,7 +227,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   systemPrompt, setSystemPrompt, privateData, setPrivateData, isListening,
   isAutoScrollEnabled, setIsAutoScrollEnabled, isTextInputEnabled, setIsTextInputEnabled,
   attachedFiles, onFileAttach, onFileRemove, metrics, audioDevices, selectedDeviceId,
-  setSelectedDeviceId, onLoadAudioDevices, isCapturingTabAudio, onToggleTabAudioCapture
+  setSelectedDeviceId, onLoadAudioDevices, isCapturingTabAudio, onToggleTabAudioCapture,
+  useApiForTranscription, setUseApiForTranscription
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isMetricsVisible, setIsMetricsVisible] = useState(false);
@@ -293,7 +313,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </div>
            <div>
                 <label htmlFor="mic-select" className="block text-sm font-medium text-gray-300 mb-2">
-                    Microphone
+                    Microphone (for voice input)
                 </label>
                 <select
                     id="mic-select"
@@ -309,38 +329,59 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         </option>
                     ))}
                 </select>
-                 <p className="text-xs text-gray-500 mt-2">
-                    Note: This sets a preference, but the browser may still use the system's default device.
-                </p>
             </div>
-             <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                    External Audio Source
+             <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-300">
+                    Transcribe from Tab
                 </label>
-                <button
-                    onClick={onToggleTabAudioCapture}
-                    disabled={isListening}
-                    className={`w-full flex items-center justify-center gap-2 font-semibold py-2 px-3 rounded-lg text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed ${
-                        isCapturingTabAudio
-                        ? 'bg-red-600 hover:bg-red-500 text-white focus:ring-red-500'
-                        : 'bg-gray-600 hover:bg-gray-500 text-white focus:ring-gray-400'
-                    }`}
-                >
-                    <SpeakerWaveIcon className="w-4 h-4" />
-                    <span>{isCapturingTabAudio ? 'Stop Capturing Audio' : 'Capture Tab Audio'}</span>
-                </button>
-                {isCapturingTabAudio && (
-                     <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
-                        <p className="font-bold text-cyan-400">Action Required for Tab Transcription</p>
+
+                <div className="flex items-center justify-between">
+                     <label htmlFor="api-transcription-toggle" className="text-sm font-medium text-gray-400 cursor-pointer select-none">
+                        Use Gemini API for Transcription
+                     </label>
+                     <button type="button" id="api-transcription-toggle" role="switch" aria-checked={useApiForTranscription} onClick={() => setUseApiForTranscription(!useApiForTranscription)} disabled={isListening} className={`${useApiForTranscription ? 'bg-cyan-500' : 'bg-gray-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed`} aria-label="Enable API-based tab transcription">
+                       <span aria-hidden="true" className={`${useApiForTranscription ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`} />
+                     </button>
+                 </div>
+                
+                {useApiForTranscription ? (
+                    <>
+                        <button
+                            onClick={onToggleTabAudioCapture}
+                            disabled={isListening && !isCapturingTabAudio}
+                            className={`w-full flex items-center justify-center gap-2 font-semibold py-2 px-3 rounded-lg text-sm transition duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                isCapturingTabAudio
+                                ? 'bg-red-600 hover:bg-red-500 text-white focus:ring-red-500'
+                                : 'bg-gray-600 hover:bg-gray-500 text-white focus:ring-gray-400'
+                            }`}
+                        >
+                            <SpeakerWaveIcon className="w-4 h-4" />
+                            <span>{isCapturingTabAudio ? 'Stop Tab Capture' : 'Capture Audio from Tab'}</span>
+                        </button>
+                         {isCapturingTabAudio && (
+                             <div className="mt-3 p-3 bg-gray-900/70 border border-cyan-500/30 rounded-lg text-xs space-y-2">
+                                <p className="font-bold text-cyan-400">Ready to Transcribe</p>
+                                <p className="text-gray-400">
+                                   The application is now capturing audio from the selected tab. You can close this panel.
+                                </p>
+                                 <p className="text-gray-400">
+                                    Use the main <MicIcon className="w-3 h-3 inline-block" /> button on the chat screen to start and stop the continuous transcription.
+                                </p>
+                            </div>
+                        )}
+                         <p className="text-xs text-gray-500 mt-2">
+                           Continuously transcribes audio from another browser tab using the Gemini API.
+                        </p>
+                    </>
+                ) : (
+                    <div className="p-3 bg-gray-900/70 border border-gray-600/50 rounded-lg text-xs space-y-2">
+                        <p className="font-bold text-gray-300">Manual Transcription Method</p>
                         <p className="text-gray-400">
-                           To transcribe the captured audio and isolate it from your microphone, you <strong>must</strong> select a virtual audio device (e.g., "Stereo Mix" or a third-party loopback tool) from the <strong>Microphone</strong> dropdown above.
+                           To transcribe from a tab, use a virtual audio device (e.g., VB-Cable, BlackHole) to route your tab's audio to a microphone input.
                         </p>
                          <p className="text-gray-400">
-                            The application will then use that source when you press the listen button. Using 'Default Microphone' will not capture tab audio.
+                           Then, select that virtual device from the 'Microphone' dropdown above and use the main microphone button to start listening.
                         </p>
-                        <a href="https://github.com/existential-audio/BlackHole" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">
-                            Learn how to set up a virtual audio device.
-                        </a>
                     </div>
                 )}
             </div>

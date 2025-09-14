@@ -1,3 +1,4 @@
+
 /**
  * @fileoverview The main application component for the Gemini Real-time Voice Assistant.
  * It manages state, handles speech recognition and text input, orchestrates communication
@@ -7,7 +8,7 @@
 // FIX: Corrected React import from 'React, aistudio' to 'React'.
 import React from 'react';
 import type { Chat, Content, Part } from '@google/genai';
-import { createChatSession } from './services/geminiService';
+import { createChatSession, transcribeAudio } from './services/geminiService';
 import type { Message, FileAttachment } from './types';
 import SettingsPanel, { SettingsPanelProps } from './components/SettingsPanel';
 import ConversationView from './components/ConversationView';
@@ -122,7 +123,11 @@ const App: React.FC = () => {
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = React.useState(false);
   const [isTextInputEnabled, setIsTextInputEnabled] = React.useState(true);
   const [textInputValue, setTextInputValue] = React.useState('');
+  
+  // State for tab audio transcription
   const [isCapturingTabAudio, setIsCapturingTabAudio] = React.useState(false);
+  const [useApiForTranscription, setUseApiForTranscription] = React.useState(true);
+
 
   // State for hardware settings
   const [audioDevices, setAudioDevices] = React.useState<MediaDeviceInfo[]>([]);
@@ -144,6 +149,7 @@ const App: React.FC = () => {
   // Refs are used to hold instances or values that persist across re-renders without causing them.
   const chatRef = React.useRef<Chat | null>(null);
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   // This ref tracks if the user manually stopped recognition, vs. it stopping on its own (e.g., due to an error or timeout).
   // It's critical for the auto-restart logic in the `onend` event handler.
   const userStoppedRef = React.useRef<boolean>(true);
@@ -523,6 +529,110 @@ const App: React.FC = () => {
   };
 
 
+  // --- Tab Audio Transcription Logic ---
+
+  /**
+   * Converts a Blob object to a base64 encoded string.
+   * @param {Blob} blob - The audio blob from MediaRecorder.
+   * @returns {Promise<string>} A promise that resolves with the base64 string.
+   */
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (reader.result) {
+                // result is a data URL (e.g., "data:audio/webm;base64,....")
+                // We only need the base64 part after the comma.
+                const base64 = (reader.result as string).split(',')[1];
+                resolve(base64);
+            } else {
+                reject(new Error("File reading failed."));
+            }
+        };
+        reader.onerror = (error) => reject(error);
+        reader.readAsDataURL(blob);
+    });
+  };
+
+  /**
+   * Starts continuously recording the captured tab audio stream for transcription.
+   */
+  const startTabAudioTranscription = React.useCallback(() => {
+    if (!tabAudioStreamRef.current) {
+        logger.error("Cannot start tab transcription: no audio stream.");
+        setError("Audio stream not available. Try capturing the tab again.");
+        return;
+    }
+    
+    try {
+        logger.info("Starting MediaRecorder for continuous tab audio transcription.");
+        const options = { mimeType: 'audio/webm; codecs=opus' };
+        const recorder = new MediaRecorder(tabAudioStreamRef.current, options);
+        mediaRecorderRef.current = recorder;
+
+        /**
+         * Processes a single chunk of audio: transcribes it and sends it to the chat.
+         * This runs as a fire-and-forget promise to avoid blocking the recorder.
+         * @param {Blob} audioBlob - The audio data chunk.
+         */
+        const processAudioChunk = async (audioBlob: Blob) => {
+          try {
+            setStatus("Processing audio chunk...");
+            const base64Audio = await transcribeAudio(await blobToBase64(audioBlob), 'audio/webm');
+            if (base64Audio && base64Audio.trim()) {
+              logger.info("Continuous transcription successful, sending to chat.", { transcript: base64Audio });
+              sendToGemini(base64Audio.trim());
+            } else {
+              logger.warn("Continuous transcription result was empty.");
+            }
+          } catch (e) {
+            logger.error("Failed to process audio chunk:", e);
+            setError("Failed to transcribe audio chunk.");
+          } finally {
+            // If the recorder is still going, reset the status to the main message.
+            if (mediaRecorderRef.current?.state === 'recording') {
+              setStatus("Transcribing from tab...");
+            }
+          }
+        };
+
+        // This event fires every `timeslice` milliseconds.
+        recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                processAudioChunk(event.data);
+            }
+        };
+
+        // This event fires when the recorder is explicitly stopped.
+        recorder.onstop = () => {
+            logger.info("MediaRecorder stopped.");
+            setIsListening(false);
+            setStatus('');
+        };
+        
+        // Start recording, firing `ondataavailable` every 5 seconds.
+        recorder.start(5000); 
+        setIsListening(true);
+        setStatus("Transcribing from tab...");
+    } catch (e) {
+        logger.error("Failed to start MediaRecorder:", e);
+        setError("Could not start audio recorder. Is the MIME type supported?");
+        setIsListening(false);
+    }
+  }, [sendToGemini]);
+
+  /**
+   * Stops the continuous tab audio recording.
+   */
+  const stopTabAudioTranscription = React.useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        logger.info("Stopping MediaRecorder for continuous transcription.");
+        mediaRecorderRef.current.stop(); // This will trigger a final ondataavailable and then onstop.
+        userStoppedRef.current = true;
+    }
+  }, []);
+  
+
   /**
    * Resets the application state to start a new conversation.
    */
@@ -530,8 +640,12 @@ const App: React.FC = () => {
     logger.info("User initiated new session. Resetting state.");
     // Stop listening if it's currently active.
     if (isListening) {
-      userStoppedRef.current = true;
-      recognitionRef.current?.stop();
+      if (isCapturingTabAudio && useApiForTranscription) {
+        stopTabAudioTranscription();
+      } else {
+        userStoppedRef.current = true;
+        recognitionRef.current?.stop();
+      }
     }
     // Reset state for a new session.
     setMessages([]);
@@ -541,12 +655,24 @@ const App: React.FC = () => {
     setTextInputValue('');
     // Re-initialize the chat with potentially updated settings.
     initializeChat();
-  }, [isListening, initializeChat]);
+  }, [isListening, initializeChat, isCapturingTabAudio, useApiForTranscription, stopTabAudioTranscription]);
   
   /**
    * Toggles the speech recognition on and off.
    */
   const handleToggleListening = React.useCallback(() => {
+    // Route to the correct handler based on whether we are capturing tab audio with the API.
+    if (isCapturingTabAudio && useApiForTranscription) {
+      if (isListening) {
+        stopTabAudioTranscription();
+      } else {
+        setError(null);
+        startTabAudioTranscription();
+      }
+      return;
+    }
+
+    // --- Original Speech Recognition Logic for Microphone ---
     if (isListening) {
       // --- Stop Listening ---
       logger.info("User manually stopped listening.");
@@ -554,16 +680,6 @@ const App: React.FC = () => {
       recognitionRef.current?.stop();
     } else {
       // --- Start Listening ---
-      
-      // If capturing tab audio, we must ensure the user has selected a virtual audio device.
-      // Otherwise, we would just be listening to their default (physical) microphone, which is confusing.
-      if (isCapturingTabAudio && selectedDeviceId === 'default') {
-        logger.warn("Tab audio transcription attempted with default microphone. Guiding user to settings.");
-        setError("Select a virtual audio device in Settings to transcribe from a tab.");
-        setShowSettings(true); // Open the settings panel to guide the user.
-        return; // Prevent the listener from starting with the wrong source.
-      }
-      
       logger.info("User started listening.");
       userStoppedRef.current = false;
       setError(null);
@@ -648,7 +764,7 @@ const App: React.FC = () => {
       // Start the recognition service.
       recognitionRef.current.start();
     }
-  }, [isListening, initializeChat, sendToGemini, isCapturingTabAudio, selectedDeviceId]);
+  }, [isListening, initializeChat, sendToGemini, isCapturingTabAudio, useApiForTranscription, startTabAudioTranscription, stopTabAudioTranscription]);
 
   /**
    * Requests microphone permissions and populates the list of available audio devices.
@@ -681,6 +797,11 @@ const App: React.FC = () => {
     * Stops the tab audio capture stream and cleans up resources.
     */
   const stopTabAudioCapture = React.useCallback(() => {
+    // If we are actively recording from the tab, stop the recorder.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
+    }
+
     if (tabAudioStreamRef.current) {
       logger.info("Stopping tab audio capture.");
       // Stop all tracks in the stream (both audio and video).
@@ -691,9 +812,13 @@ const App: React.FC = () => {
         audioElRef.current.srcObject = null;
       }
       setIsCapturingTabAudio(false);
+      // Also ensure the listening state, which is used for transcription, is turned off.
+      if (isListening) {
+        setIsListening(false);
+      }
       setStatus(""); // Clear any related status messages
     }
-  }, []);
+  }, [isListening]);
   
   /**
     * Toggles the capture of audio from another browser tab using the Screen Capture API.
@@ -739,8 +864,8 @@ const App: React.FC = () => {
       }
 
       setIsCapturingTabAudio(true);
-      // Provide clear instructions instead of auto-starting, which can cause a "stuck" state.
-      setStatus("Tab audio captured. Press the mic button to start transcribing.");
+      // Provide clear instructions for the new API-based flow.
+      setStatus("Tab audio captured. Use the microphone button to start transcribing.");
 
     } catch (err) {
         if ((err as Error).name === 'NotAllowedError') {
@@ -773,6 +898,8 @@ const App: React.FC = () => {
       onLoadAudioDevices: handleLoadAudioDevices,
       isCapturingTabAudio,
       onToggleTabAudioCapture: handleToggleTabAudioCapture,
+      useApiForTranscription,
+      setUseApiForTranscription,
   };
 
   return (

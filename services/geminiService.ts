@@ -53,3 +53,41 @@ export function createChatSession(systemInstruction: string, history?: Content[]
         },
     });
 }
+
+
+/**
+ * Transcribes a chunk of audio data using the Gemini API.
+ * @param {string} audioData - The base64-encoded audio data.
+ * @param {string} mimeType - The MIME type of the audio data (e.g., 'audio/webm').
+ * @returns {Promise<string>} A promise that resolves to the transcribed text.
+ * @throws {Error} If the API key is missing or the API call fails.
+ */
+export async function transcribeAudio(audioData: string, mimeType: string): Promise<string> {
+    const apiKey = window.__GEMINI_API_KEY__;
+    if (!apiKey) {
+        const errorMessage = "API key is missing.";
+        logger.error(errorMessage);
+        throw new Error(errorMessage);
+    }
+
+    logger.info('Sending audio to Gemini for transcription.', { mimeType });
+    const ai = new GoogleGenAI({ apiKey: apiKey });
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { 
+                parts: [
+                    // A specific prompt to ensure the model *only* returns the transcript.
+                    { text: "Transcribe the following audio recording verbatim. Output only the transcribed text and nothing else." },
+                    { inlineData: { mimeType, data: audioData } }
+                ] 
+            },
+        });
+        logger.info('Transcription received from Gemini.');
+        return response.text.trim();
+    } catch (error) {
+        logger.error("Error during Gemini transcription:", error);
+        throw new Error("Failed to transcribe audio.");
+    }
+}
