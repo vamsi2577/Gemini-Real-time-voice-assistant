@@ -1,4 +1,3 @@
-
 /**
  * @fileoverview The main application component for the Gemini Real-time Voice Assistant.
  * It manages state, handles speech recognition and text input, orchestrates communication
@@ -160,10 +159,12 @@ const App: React.FC = () => {
   const tabAudioStreamRef = React.useRef<MediaStream | null>(null);
   // A ref to a hidden <audio> element, used to keep the captured tab audio stream active.
   const audioElRef = React.useRef<HTMLAudioElement>(null);
+  // A ref for the interval ID used in the MediaRecorder fallback method.
+  const requestDataIntervalRef = React.useRef<number | null>(null);
 
   // Log the current fix attempt count on component mount.
   React.useEffect(() => {
-    logger.info('Fix attempt #3: Isolating audio stream for MediaRecorder.');
+    logger.info('Fix attempt #5: Added MediaRecorder.start() fallback mechanism.');
   }, []);
 
   // FIX: Removed useEffect for saving API key to local storage.
@@ -640,6 +641,7 @@ const App: React.FC = () => {
             'audio/webm; codecs=opus', // Preferred, high quality and efficiency
             'audio/webm',              // General fallback
             'audio/ogg; codecs=opus',  // Alternative for some browsers
+            'audio/mp4',               // For Safari compatibility
         ];
 
         let selectedMimeType = '';
@@ -681,8 +683,15 @@ const App: React.FC = () => {
          */
         const processAudioChunk = async (audioBlob: Blob) => {
           try {
-            // Use the actual mimeType that the recorder is using.
-            const mimeType = mediaRecorderMimeTypeRef.current;
+            // FIX: Prioritize the MIME type from the blob itself for maximum accuracy.
+            // Fall back to the type determined when the recorder was created.
+            const mimeType = audioBlob.type || mediaRecorderMimeTypeRef.current;
+            if (!mimeType) {
+                logger.error("Could not determine MIME type for audio chunk. Skipping transcription.", { blobType: audioBlob.type, refType: mediaRecorderMimeTypeRef.current });
+                setError("Audio format error, cannot transcribe.");
+                return;
+            }
+
             setStatus("Processing audio chunk...");
             logger.info("Processing audio chunk.", { size: audioBlob.size, type: mimeType });
 
@@ -703,30 +712,73 @@ const App: React.FC = () => {
           }
         };
 
-        // This event fires every `timeslice` milliseconds.
+        // This event fires every `timeslice` milliseconds or when `requestData` is called.
         recorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
                 processAudioChunk(event.data);
             }
         };
+        
+        // Clear any leftover interval from a previous session.
+        if (requestDataIntervalRef.current) {
+            clearInterval(requestDataIntervalRef.current);
+            requestDataIntervalRef.current = null;
+        }
 
         // This event fires when the recorder is explicitly stopped.
         recorder.onstop = () => {
             logger.info("MediaRecorder stopped.");
+            // Clear the interval if it was used for the fallback method.
+            if (requestDataIntervalRef.current) {
+                clearInterval(requestDataIntervalRef.current);
+                requestDataIntervalRef.current = null;
+                logger.info("Cleared requestData interval.");
+            }
             setIsListening(false);
             setStatus('');
         };
         
-        logger.info("Attempting to start MediaRecorder with 5s timeslice...");
-        // Start recording, firing `ondataavailable` every 5 seconds.
-        recorder.start(5000); 
-        logger.info("MediaRecorder started successfully for continuous tab audio transcription.");
+        // Add an onerror handler for better diagnostics.
+        recorder.onerror = (event) => {
+            const error = (event as any).error;
+            logger.error("MediaRecorder encountered an error:", error || event);
+            setError(`MediaRecorder error: ${error?.name || 'Unknown error'}`);
+            userStoppedRef.current = true;
+            setIsListening(false);
+            setStatus('');
+        };
+        
+        // --- Fallback Mechanism for recorder.start() ---
+        try {
+            logger.info("Attempting to start MediaRecorder with 5s timeslice...");
+            recorder.start(5000); 
+            logger.info("MediaRecorder started successfully with timeslice.");
+        } catch (startError) {
+            logger.warn("MediaRecorder.start(timeslice) failed. Attempting fallback.", startError);
+            try {
+                // Fallback: start without a timeslice and manually request data.
+                recorder.start();
+                const intervalId = window.setInterval(() => {
+                    if (mediaRecorderRef.current?.state === 'recording') {
+                        mediaRecorderRef.current.requestData();
+                    }
+                }, 5000);
+                requestDataIntervalRef.current = intervalId;
+                logger.info("Fallback recorder.start() succeeded. Using setInterval to request data.");
+            } catch (fallbackError) {
+                 logger.error("MediaRecorder fallback start() also failed:", fallbackError);
+                 setError("Could not start audio recorder. Check browser support.");
+                 setIsListening(false);
+                 return; // Exit if both methods fail.
+            }
+        }
+        
         setIsListening(true);
         setStatus("Transcribing from tab...");
 
     } catch (e) {
-        logger.error("Failed to start MediaRecorder:", e);
-        setError("Could not start audio recorder. Check browser support and permissions.");
+        logger.error("Failed to set up MediaRecorder:", e);
+        setError("Could not initialize audio recorder. Check browser support and permissions.");
         setIsListening(false);
     }
   }, [sendToGemini, stopTabAudioCapture]);
