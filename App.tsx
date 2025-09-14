@@ -164,7 +164,7 @@ const App: React.FC = () => {
 
   // Log the current fix attempt count on component mount.
   React.useEffect(() => {
-    logger.info('Fix attempt #5: Added MediaRecorder.start() fallback mechanism.');
+    logger.info('Fix attempt #6: Added audioBitsPerSecond and final pre-start stream check.');
   }, []);
 
   // FIX: Removed useEffect for saving API key to local storage.
@@ -638,10 +638,11 @@ const App: React.FC = () => {
     try {
         // --- Robust MIME Type Selection ---
         const mimeTypesToTry = [
-            'audio/webm; codecs=opus', // Preferred, high quality and efficiency
-            'audio/webm',              // General fallback
-            'audio/ogg; codecs=opus',  // Alternative for some browsers
-            'audio/mp4',               // For Safari compatibility
+            'audio/webm;codecs=opus', // Preferred for Chrome/Firefox
+            'audio/mp4',              // Preferred for Safari/Edge
+            'audio/webm',             // Fallback
+            'audio/ogg',              // Fallback
+            'audio/wav',              // Uncompressed, maximum compatibility
         ];
 
         let selectedMimeType = '';
@@ -658,7 +659,13 @@ const App: React.FC = () => {
             logger.warn("No preferred MIME type is supported. Letting the browser choose a default.");
         }
 
-        const options = selectedMimeType ? { mimeType: selectedMimeType } : {};
+        // Define MediaRecorder options, including a standard bitrate.
+        const options: MediaRecorderOptions = {
+            audioBitsPerSecond: 128000,
+        };
+        if (selectedMimeType) {
+            options.mimeType = selectedMimeType;
+        }
         // --- End Robust MIME Type Selection ---
         
         // --- FIX: Isolate audio tracks into a new stream ---
@@ -748,6 +755,15 @@ const App: React.FC = () => {
             setStatus('');
         };
         
+        // --- Final Pre-Start Check ---
+        const tracks = audioOnlyStream.getAudioTracks();
+        logger.info("Final pre-start check:", {
+            streamId: audioOnlyStream.id,
+            streamActive: audioOnlyStream.active,
+            trackCount: tracks.length,
+            trackStates: tracks.map(t => ({ id: t.id, readyState: t.readyState, muted: t.muted, enabled: t.enabled }))
+        });
+
         // --- Fallback Mechanism for recorder.start() ---
         try {
             logger.info("Attempting to start MediaRecorder with 5s timeslice...");
@@ -767,7 +783,7 @@ const App: React.FC = () => {
                 logger.info("Fallback recorder.start() succeeded. Using setInterval to request data.");
             } catch (fallbackError) {
                  logger.error("MediaRecorder fallback start() also failed:", fallbackError);
-                 setError("Could not start audio recorder. Check browser support.");
+                 setError("Fatal: Could not start audio recorder. The browser rejected the request.");
                  setIsListening(false);
                  return; // Exit if both methods fail.
             }
