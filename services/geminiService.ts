@@ -1,3 +1,4 @@
+
 /**
  * @fileoverview Service for interacting with the Google Gemini API.
  */
@@ -84,8 +85,9 @@ export async function transcribeAudio(audioData: string, mimeType: string): Prom
                 ] 
             },
         });
-        logger.info('Transcription received from Gemini.');
-        return response.text.trim();
+        const transcribedText = response.text.trim();
+        logger.info("TRANSCRIPT (from tab audio):", transcribedText);
+        return transcribedText;
     } catch (error) {
         logger.error("Error during Gemini transcription:", error);
         throw new Error("Failed to transcribe audio.");

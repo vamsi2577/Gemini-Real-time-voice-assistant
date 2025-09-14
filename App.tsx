@@ -1,5 +1,4 @@
 
-
 /**
  * @fileoverview The main application component for the Gemini Real-time Voice Assistant.
  * It manages state, handles speech recognition and text input, orchestrates communication
@@ -162,6 +161,10 @@ const App: React.FC = () => {
   // A ref to a hidden <audio> element, used to keep the captured tab audio stream active.
   const audioElRef = React.useRef<HTMLAudioElement>(null);
 
+  // Log the current fix attempt count on component mount.
+  React.useEffect(() => {
+    logger.info('Fix attempt #3: Isolating audio stream for MediaRecorder.');
+  }, []);
 
   // FIX: Removed useEffect for saving API key to local storage.
 
@@ -623,7 +626,6 @@ const App: React.FC = () => {
     });
     
     // Crucial check: if the track is not 'live', the recorder will fail.
-    // This can happen if the user closes the shared tab or waits too long.
     if (audioTracks.some(track => track.readyState !== 'live')) {
         logger.error("One or more audio tracks are not live. Cannot record.", { readyStates: audioTracks.map(t => t.readyState) });
         setError("The audio source has ended. Please capture the tab again.");
@@ -655,10 +657,15 @@ const App: React.FC = () => {
         }
 
         const options = selectedMimeType ? { mimeType: selectedMimeType } : {};
-        logger.info("Initializing MediaRecorder with options:", options);
         // --- End Robust MIME Type Selection ---
         
-        const recorder = new MediaRecorder(stream, options);
+        // --- FIX: Isolate audio tracks into a new stream ---
+        const audioOnlyStream = new MediaStream(stream.getAudioTracks());
+        logger.info("Created a new MediaStream with audio tracks only.");
+
+        logger.info("Attempting to instantiate MediaRecorder with options:", options);
+        const recorder = new MediaRecorder(audioOnlyStream, options);
+        logger.info("MediaRecorder instantiated successfully.");
         mediaRecorderRef.current = recorder;
 
         // The `mimeType` property of the recorder instance gives us the *actual* type
@@ -679,10 +686,9 @@ const App: React.FC = () => {
             setStatus("Processing audio chunk...");
             logger.info("Processing audio chunk.", { size: audioBlob.size, type: mimeType });
 
-            const base64Audio = await transcribeAudio(await blobToBase64(audioBlob), mimeType);
-            if (base64Audio && base64Audio.trim()) {
-              logger.info("Continuous transcription successful, sending to chat.", { transcript: base64Audio });
-              sendToGemini(base64Audio.trim());
+            const transcribedText = await transcribeAudio(await blobToBase64(audioBlob), mimeType);
+            if (transcribedText && transcribedText.trim()) {
+              sendToGemini(transcribedText.trim());
             } else {
               logger.warn("Continuous transcription result was empty.");
             }
@@ -711,11 +717,12 @@ const App: React.FC = () => {
             setStatus('');
         };
         
+        logger.info("Attempting to start MediaRecorder with 5s timeslice...");
         // Start recording, firing `ondataavailable` every 5 seconds.
         recorder.start(5000); 
+        logger.info("MediaRecorder started successfully for continuous tab audio transcription.");
         setIsListening(true);
         setStatus("Transcribing from tab...");
-        logger.info("MediaRecorder started successfully for continuous tab audio transcription.");
 
     } catch (e) {
         logger.error("Failed to start MediaRecorder:", e);
@@ -857,7 +864,7 @@ const App: React.FC = () => {
 
           // If a final transcript is ready, send it to Gemini.
           if (finalTranscript.trim()) {
-            logger.info("Final transcript received:", { transcript: finalTranscript.trim() });
+            logger.info("TRANSCRIPT (from mic):", finalTranscript.trim());
             sendToGemini(finalTranscript.trim());
           }
         };
